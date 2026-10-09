@@ -22,6 +22,7 @@ import os
 import time
 import warnings
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import torch
@@ -31,6 +32,7 @@ from faster_qwen3_tts.talker_graph import TalkerGraph
 from qwen_tts import Qwen3TTSModel
 
 MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+LOCAL_MODEL = Path(__file__).resolve().parent / "model"
 GiB = 2**30
 RUNTIME_RESERVE = 0.25 * GiB  # CUDA graph pools, predictor cache, activations (measured ~0.1 GiB + KV cache)
 DECODER_ACTIVATIONS = 1.0 * GiB  # decoder conv activations; grows with utterance length
@@ -161,15 +163,27 @@ def _plan(base: Qwen3TTSModel, device: str, dtype: torch.dtype, max_seq_len: int
     return plan
 
 
-def load(model_id: str = MODEL_ID, device: str = "cuda", max_seq_len: int = 1024, *,
+def load(model_id: Optional[str] = None, device: str = "cuda", max_seq_len: int = 1024, *,
          dtype: Optional[torch.dtype] = None, gemv: Optional[bool] = None,
-         offload_embedding: Optional[bool] = None, decoder_on_gpu: Optional[bool] = None) -> FasterQwen3TTS:
-    """Load the model, pick a plan for this GPU, and capture CUDA graphs.
+         offload_embedding: Optional[bool] = None, decoder_on_gpu: Optional[bool] = None) -> FasterQwen3TTS | Qwen3TTSModel:
+    """Load the local model if available, or the default Hub model.
+
+    On CUDA, pick a plan for the GPU and capture CUDA graphs. On CPU, use
+    standard Qwen3-TTS generation in float32 unless dtype is overridden.
 
     `max_seq_len` bounds prompt + audio frames (12 frames/s); smaller is faster
     since attention spans the whole static cache. The keyword options override
     auto-detection; the chosen configuration is stored on `tts.plan`.
     """
+    if model_id is None:
+        model_id = str(LOCAL_MODEL) if (LOCAL_MODEL / "model.safetensors").is_file() else MODEL_ID
+    if torch.device(device).type == "cpu":
+        base = Qwen3TTSModel.from_pretrained(model_id, device_map="cpu", dtype=dtype or torch.float32,
+                                            attn_implementation="sdpa")
+        base.plan = f"CPU {str(dtype or torch.float32)[6:]}, standard Qwen3-TTS generation"
+        return base
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is unavailable. Run with NVIDIA GPU access or choose device='cpu'.")
     device = str(torch.device(device if ":" in device else f"{device}:{torch.cuda.current_device()}"))
     if dtype is None:
         # bf16 is the training dtype; Turing and older only emulate it.

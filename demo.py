@@ -42,6 +42,9 @@ def main() -> None:
     p.add_argument("-o", "--out", default="out", help="Output directory")
     p.add_argument("--seed", type=int, default=None, help="Fix sampling seed for reproducible voices")
     p.add_argument("--temperature", type=float, default=0.9)
+    p.add_argument("--model", default=None, help="Local model directory or Hugging Face model ID (defaults to local model/ if present)")
+    p.add_argument("--device", default="cuda:0", help="Device: cuda:0, cuda:1, or cpu")
+    p.add_argument("--max-new-tokens", type=int, default=2048, help="Maximum generated audio frames (12/s)")
     p.add_argument("--max-seq-len", type=int, default=1024,
                    help="Prompt + audio frame budget (12 frames/s); lower is faster")
     args = p.parse_args()
@@ -55,8 +58,10 @@ def main() -> None:
     logging.basicConfig(level=logging.WARNING)
 
     t0 = time.perf_counter()
-    tts = fast_tts.load(max_seq_len=args.max_seq_len)
-    print(f"Loaded in {time.perf_counter() - t0:.1f}s, VRAM {torch.cuda.memory_allocated() / 2**30:.2f} GiB\n"
+    tts = fast_tts.load(model_id=args.model, device=args.device, max_seq_len=args.max_seq_len)
+    use_cuda = torch.device(args.device).type == "cuda"
+    vram = torch.cuda.memory_allocated(args.device) / 2**30 if use_cuda else 0
+    print(f"Loaded in {time.perf_counter() - t0:.1f}s, VRAM {vram:.2f} GiB\n"
           f"Plan: {tts.plan}")
 
     for name, voice, text in jobs:
@@ -64,13 +69,13 @@ def main() -> None:
             torch.manual_seed(args.seed)
         t0 = time.perf_counter()
         wavs, sr = tts.generate_voice_design(text=text, instruct=voice, language=args.language,
-                                             temperature=args.temperature)
+                                             temperature=args.temperature, max_new_tokens=args.max_new_tokens)
         dt = time.perf_counter() - t0
         path = out / f"{name}.wav"
         sf.write(path, wavs[0], sr)
         dur = len(wavs[0]) / sr
-        print(f"{path}  {dur:.1f}s audio in {dt:.1f}s (RTF {dt / dur:.2f}), "
-              f"peak VRAM {torch.cuda.max_memory_allocated() / 2**30:.2f} GiB")
+        peak = torch.cuda.max_memory_allocated(args.device) / 2**30 if use_cuda else 0
+        print(f"{path}  {dur:.1f}s audio in {dt:.1f}s (RTF {dt / dur:.2f}), peak VRAM {peak:.2f} GiB")
 
 
 if __name__ == "__main__":

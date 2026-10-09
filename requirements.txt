@@ -4,3 +4,6 @@ faster-qwen3-tts==0.5.4
 qwen-tts-hf==0.1.1.post1
 # 5.19 breaks qwen-tts-hf's RoPE compat shim (MimiConfig has no rope_theta)
 transformers==5.15.1
+fastapi==0.143.0
+uvicorn==0.54.0
+soundfile==0.14.0

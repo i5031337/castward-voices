@@ -1,4 +1,6 @@
 .venv/
+model/
 out/
 __pycache__/
 *.wav
+:memory:.ses
