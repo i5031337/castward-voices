@@ -80,7 +80,21 @@ thread so the GPU's shared caches cannot overlap. Kokoro narration runs on a sep
 worker and stays resident. Download its local files as described below before starting, or use
 `--no-kokoro` to disable narration. The server binds to localhost by default.
 Use `--device cpu` for CPU generation, or `--model /path/to/model` for another model directory.
-The default CUDA sequence budget is 4096; adjust with `--max-seq-len`.
+Use `--clone-device cpu` to run only the 0.6B Base cloning model on CPU while VoiceDesign
+continues on the GPU. On a Windows GTX 1650 Ti, this avoids a CUDA assertion in the fast
+clone path; the 1024-token sequence budget below also fits the 4 GB GPU more comfortably.
+With the models downloaded into the local directories described in this README and FFmpeg
+installed on `PATH`, start that configuration from PowerShell with:
+
+```powershell
+$env:HF_HUB_OFFLINE = '1'
+$env:OMP_NUM_THREADS = '4'
+.\.venv\Scripts\python.exe server.py --device cuda:0 --clone-device cpu --max-seq-len 1024 --port 8001
+```
+
+On an RTX 5060 Ti, omit `--clone-device cpu` so both Qwen models use the GPU. The server's
+default 4096-token CUDA sequence budget is unchanged; adjust it only for your workload.
+
 Use `--design-only` to run the original VoiceDesign endpoint without the smaller model.
 
 ```bash

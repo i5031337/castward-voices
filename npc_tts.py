@@ -22,9 +22,12 @@ log = logging.getLogger("qwen3-tts.npc")
 class SpeechEngine:
     """Called only on the server's dedicated generation thread."""
 
-    def __init__(self, *, loader, device, design_model, clone_model, max_seq_len, voices_dir, selector=None):
+    def __init__(self, *, loader, device, design_model, clone_model, max_seq_len, voices_dir,
+                 selector=None, clone_device=None):
         self.loader = loader
         self.device = device
+        self.clone_device = clone_device or device
+        self.active_device = None
         self.design_model = design_model
         self.clone_model = clone_model
         self.max_seq_len = max_seq_len
@@ -53,13 +56,15 @@ class SpeechEngine:
             torch.cuda.set_device(self.device)
             torch.cuda.empty_cache()
         model = self.clone_model if kind == "clone" else self.design_model
-        self.tts = self.loader(model_id=model, device=self.device, max_seq_len=self.max_seq_len)
+        target_device = self.clone_device if kind == "clone" else self.device
+        self.tts = self.loader(model_id=model, device=target_device, max_seq_len=self.max_seq_len)
+        self.active_device = target_device
         self.kind = kind
         log.info("Loaded %s model: %s", kind, self.tts.plan)
         return self.tts
 
     def check_budget(self, tts, *, text, language, max_new_tokens, instruct=None, prompt=None, ref_text=""):
-        if not self.device.startswith("cuda"):
+        if not self.active_device.startswith("cuda"):
             return
         if prompt is None:
             prepared = tts._prepare_generation_custom(text=text, language=language, speaker=None,
@@ -127,7 +132,7 @@ class SpeechEngine:
         prompt = base._prompt_items_to_voice_clone_prompt(items)
         self.check_budget(tts, text=REFERENCE_TEXT, language="English", max_new_tokens=192, prompt=prompt)
         torch.manual_seed(seed)
-        if not self.device.startswith("cuda"):
+        if not self.active_device.startswith("cuda"):
             prompt = items
         wavs, out_sr = tts.generate_voice_clone(text=REFERENCE_TEXT, language="English",
             voice_clone_prompt=prompt, ref_text="", non_streaming_mode=True, temperature=0.9, max_new_tokens=192)
@@ -237,7 +242,7 @@ class SpeechEngine:
                                   prompt=prompt, ref_text=metadata["ref_text"])
                 if body.seed is not None:
                     torch.manual_seed(body.seed)
-                if not self.device.startswith("cuda"):
+                if not self.active_device.startswith("cuda"):
                     # The upstream CPU wrapper reads the reference transcript from
                     # prompt items, not from ref_text when a prompt dict is supplied.
                     from qwen_tts import VoiceClonePromptItem

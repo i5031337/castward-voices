@@ -111,7 +111,7 @@ def encode_audio(wav: np.ndarray, sample_rate: int, fmt: str, speed: float) -> b
 def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, loader=None,
                clone_model=str(LOCAL_CLONE_MODEL), voices_dir="voices", selector=None,
                kokoro_enabled=True, kokoro_loader=None, kokoro_model_dir=LOCAL_KOKORO_MODEL,
-               kokoro_device="cpu"):
+               kokoro_device="cpu", clone_device=None):
     def prepare_worker(engine, npc_id):
         try:
             engine.prepare(npc_id)
@@ -150,6 +150,7 @@ def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, l
                 load_model = fast_tts.load
             app.state.engine = await asyncio.get_running_loop().run_in_executor(
                 executor, partial(SpeechEngine, loader=load_model, design_model=model, device=device,
+                                  clone_device=clone_device,
                                   clone_model=clone_model, max_seq_len=max_seq_len, voices_dir=voices_dir,
                                   selector=selector))
             log.info("Loaded speech model: %s", app.state.engine.plan)
@@ -336,6 +337,7 @@ def main():
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--model", default=None)
     parser.add_argument("--clone-model", default=str(LOCAL_CLONE_MODEL), help="Local 0.6B Base model directory")
+    parser.add_argument("--clone-device", default=None, help="Device for 0.6B Base; defaults to --device")
     parser.add_argument("--voices-dir", default="voices", help="Persistent NPC voice directory")
     parser.add_argument("--design-only", action="store_true", help="Disable NPC cloning and use only VoiceDesign")
     parser.add_argument("--no-kokoro", action="store_true", help="Disable the Kokoro narrator backend")
@@ -350,7 +352,8 @@ def main():
     logging.basicConfig(level=logging.INFO)
     os.environ.setdefault("OMP_NUM_THREADS", "4")
     import uvicorn
-    uvicorn.run(create_app(device=args.device, model=args.model, max_seq_len=args.max_seq_len,
+    uvicorn.run(create_app(device=args.device, clone_device=args.clone_device,
+                           model=args.model, max_seq_len=args.max_seq_len,
                            api_key=os.environ.get("TTS_API_KEY"), voices_dir=args.voices_dir,
                            kokoro_enabled=not args.no_kokoro, kokoro_model_dir=args.kokoro_model,
                            kokoro_device=args.kokoro_device,
