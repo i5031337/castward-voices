@@ -1,5 +1,7 @@
 .venv/
 model/
+models/
+voices/
 out/
 __pycache__/
 *.wav

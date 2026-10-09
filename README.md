@@ -73,10 +73,13 @@ Start the server (port 8001 avoids another service already using 8000 on this ma
 OMP_NUM_THREADS=4 .venv/bin/python server.py --device cuda:0 --port 8001
 ```
 
-The model loads and captures CUDA graphs once at startup. Requests queue on one generation
-thread so the GPU's shared caches cannot overlap. The server binds to localhost by default.
+The server loads the 0.6B Base model and captures CUDA graphs at startup. It switches to
+VoiceDesign when a request needs a new voice, then switches back to the smaller model for NPC
+dialogue. Only one model remains loaded at a time. Requests queue on one generation thread
+so the GPU's shared caches cannot overlap. The server binds to localhost by default.
 Use `--device cpu` for CPU generation, or `--model /path/to/model` for another model directory.
 The default CUDA sequence budget is 4096; adjust with `--max-seq-len`.
+Use `--design-only` to run the original VoiceDesign endpoint without the smaller model.
 
 ```bash
 curl http://127.0.0.1:8001/v1/audio/speech \
@@ -126,6 +129,114 @@ Run request, encoding, authentication, and concurrency tests with
 `.venv/bin/python -m unittest discover -s tests -v`.
 With a GPU server running on port 8001, `.venv/bin/python tests/smoke_endpoint.py` verifies real
 HTTP generation in all six formats, speed changes, and request validation.
+
+## Persistent NPC voices
+
+The local cloning model is [Qwen3-TTS-12Hz-0.6B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base).
+Download it into the directory expected by the server:
+
+```bash
+.venv/bin/hf download Qwen/Qwen3-TTS-12Hz-0.6B-Base --local-dir models/0.6B-Base
+.venv/bin/python download_alignment.py
+```
+
+Send the NPC's hash in `npc_id` and its voice description in `instructions`. The first request
+speaks the requested dialogue directly with 1.7B VoiceDesign and returns it immediately after
+generation. After sending the audio, the server prepares a reference and clone features in the
+background for subsequent requests using 0.6B Base.
+
+The reference stays between 3 and 10 seconds. Suitable first dialogue is reused intact. Longer
+dialogue is aligned against its exact text using a local Whisper tiny model on CPU; the server
+selects complete sentences and saves only their matching transcript. `download_alignment.py`
+fetches that 72 MiB checkpoint once, enabling offline alignment. For very short dialogue, a
+sentence longer than the reference budget, uncertain alignment, or a potentially truncated
+generation, the server uses the original speaker embedding to synthesize a bounded reference
+in the background. This preserves the original voice as the cloning source; it does not design
+another voice. An absent alignment checkpoint also uses this fallback.
+
+The first audio response includes `X-Voice-Status: preparing`; subsequent responses report
+`ready`. Poll `GET /v1/voices/<npc_id>` for `status`, `reference_seconds`, and any preparation
+error. Follow-up speech requests wait for pending preparation on the same generation worker.
+The first dialogue still waits for its full generation; audio generation itself is not streamed.
+
+```bash
+curl http://127.0.0.1:8001/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen3-tts","npc_id":"guard_83a9f2","instructions":"A gruff elderly guard with a low, gravelly voice","input":"Halt! State your business.","response_format":"wav","max_new_tokens":128}' \
+  --output guard.wav
+```
+
+Subsequent requests need only the same `npc_id` and new dialogue:
+
+```bash
+curl http://127.0.0.1:8001/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen3-tts-0.6b","npc_id":"guard_83a9f2","input":"You may pass. Keep out of trouble.","response_format":"wav","max_new_tokens":128}' \
+  --output guard_next.wav
+```
+
+For an OpenAI SDK client, add `extra_body={"npc_id": npc_hash, "max_new_tokens": 128}` to the
+speech call. Both `qwen3-tts` and `qwen3-tts-0.6b` support this NPC lifecycle.
+The Base model needs a reference voice; `qwen3-tts-0.6b` rejects requests without `npc_id`.
+An unknown NPC requires a description in `instructions`. IDs accept 1–128 letters, digits,
+underscores, or hyphens.
+
+Each NPC's record is stored in `voices/<sha256-of-npc-id>/`:
+
+- `dialogue.wav`: the original first dialogue before output-format or playback-speed conversion.
+- `reference.wav`: the bounded reference, preserved across later dialogue requests.
+- `metadata.json`: preparation status, NPC ID, original description, exact dialogue/reference
+  transcripts, seed, reference source, and model identity.
+- `prompt.npz`: reference speech codes and speaker embedding, saved without Python pickle.
+
+Records survive server restarts, and saved clone features skip repeated reference extraction.
+Requests for the same new NPC are serialized and produce one reference. Changed instructions
+on an existing NPC do not replace its voice; use a new versioned ID to create a different voice.
+The first dialogue and pending metadata are persisted before returning audio. Clone features
+are published before marking the record ready. If background preparation fails, the already
+returned audio remains valid and the status becomes `failed`; a later speech request retries
+preparation from the saved original dialogue. Server startup resumes records left `preparing`.
+Previously saved voices remain supported and do not require regeneration.
+The in-memory prompt cache holds up to 128 NPCs; all records remain on disk.
+Models, voices, virtual environments, and output audio are excluded from Git.
+
+Use `--clone-model /path/to/0.6B-Base` or `--voices-dir /path/to/voices` to change storage paths.
+`--device cpu` also supports saved NPC voices with the standard Qwen implementation.
+`--design-only` disables the NPC workflow.
+
+Measured on the RTX 5060 Ti, with a 4096-token sequence budget, the same dialogue text,
+and three warmed-up runs per model:
+
+| Model | Audio duration | Median generation time | Time per second of audio | Peak allocated VRAM |
+|---|---:|---:|---:|---:|
+| 1.7B VoiceDesign | 2.40 s | 1.29 s | 0.536 s | 4.46 GiB |
+| 0.6B Base, saved NPC | 2.72 s | 1.32 s | 0.487 s | 2.78 GiB |
+
+This short test used about 38% less allocated VRAM and about 9% less generation time per second
+of audio for the clone model. It compares design against cloning, so it is not a controlled
+model-quality comparison. The previous synchronous workflow took about 19 seconds for first
+NPC creation, including reference generation, model swaps, and initial feature extraction.
+With background preparation, a new NPC's 2.40-second first line returned in 3.64 seconds;
+its 4.72-second extended reference was ready at 7.82 seconds from the request. Follow-up lines
+took about 1.21 seconds. A longer first dialogue returned 24.64 seconds of audio in 14.94 seconds,
+then its 7.92-second aligned reference was ready at 18.57 seconds. These measurements include
+HTTP handling and model switches on this machine; voice descriptions and text affect timing.
+
+`.venv/bin/python tests/smoke_npc.py --npc-id new-test-id --case short` tests live creation,
+background readiness, and reference reuse. Use `--case suitable` or `--case long` to exercise
+other reference lengths, with a fresh ID for each creation test.
+Reproduce the GPU measurements with:
+
+```bash
+OMP_NUM_THREADS=4 .venv/bin/python benchmark.py --kind clone --device cuda:0
+OMP_NUM_THREADS=4 .venv/bin/python benchmark.py --kind design --device cuda:0
+```
+
+The benchmark uses `benchmark-guard-001`, created by `smoke_npc.py`; override with `--npc-id`.
+Audio and measurement JSON files are written to `out/bench/`.
+CPU cloning with four threads also passed: one warmed-up run generated 2.56 seconds of audio
+in 12.61 seconds (4.93 seconds of compute per second of audio). GPU cloning is the recommended
+default on this machine.
 
 ## Hardware adaptation
 

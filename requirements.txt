@@ -7,3 +7,4 @@ transformers==5.15.1
 fastapi==0.143.0
 uvicorn==0.54.0
 soundfile==0.14.0
+stable-ts==2.19.1

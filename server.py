@@ -4,6 +4,7 @@ import asyncio
 import io
 import logging
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -11,6 +12,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from functools import partial
+from pathlib import Path
 from typing import Literal
 
 import numpy as np
@@ -19,9 +21,11 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from npc_tts import CLONE_MODEL_ID, LOCAL_CLONE_MODEL, SpeechEngine
+from starlette.background import BackgroundTask
 
 MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
-MODEL_NAMES = {"qwen3-tts", MODEL_ID, "tts-1", "tts-1-hd", "gpt-4o-mini-tts"}
+MODEL_NAMES = {"qwen3-tts", MODEL_ID, "tts-1", "tts-1-hd", "gpt-4o-mini-tts", "qwen3-tts-0.6b", CLONE_MODEL_ID}
 VOICES = {
     "alloy": "A warm, clear narrator with a neutral American accent.",
     "ash": "A calm male voice with a clear, conversational delivery.",
@@ -58,6 +62,7 @@ class SpeechRequest(BaseModel):
     seed: int | None = Field(default=None, ge=0, le=2**63 - 1)
     temperature: float = Field(default=0.9, gt=0, le=2)
     max_new_tokens: int = Field(default=2048, ge=2, le=4096)
+    npc_id: str | None = Field(default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
 
     @field_validator("input", "voice")
     @classmethod
@@ -100,22 +105,56 @@ def encode_audio(wav: np.ndarray, sample_rate: int, fmt: str, speed: float) -> b
     return output.getvalue()
 
 
-def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, loader=None):
+def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, loader=None,
+               clone_model=str(LOCAL_CLONE_MODEL), voices_dir="voices", selector=None):
+    def prepare_worker(engine, npc_id):
+        try:
+            engine.prepare(npc_id)
+        except Exception:
+            # The first audio was already delivered; readiness/failure is exposed
+            # separately and later requests can retry without changing the voice.
+            log.exception("Background reference preparation failed for NPC %s", npc_id)
+
+    def queue_preparation(npc_id):
+        future = app.state.preparations.get(npc_id)
+        if future is None or future.done():
+            future = asyncio.get_running_loop().run_in_executor(
+                app.state.executor, prepare_worker, app.state.engine, npc_id)
+            app.state.preparations[npc_id] = future
+            future.add_done_callback(lambda done: app.state.preparations.pop(npc_id, None)
+                                     if app.state.preparations.get(npc_id) is done else None)
+        return future
+
+    async def prepare_after_response(npc_id):
+        # Starlette calls this only after it sends the complete audio response.
+        await asyncio.shield(queue_preparation(npc_id))
+
     @asynccontextmanager
     async def lifespan(app):
         # Load and generate on one dedicated thread. CUDA graphs and their caches
         # must never be used by concurrent requests.
         with ThreadPoolExecutor(max_workers=1, thread_name_prefix="tts") as executor:
             app.state.executor = executor
+            app.state.preparations = {}
             load_model = loader
             if load_model is None:
                 import fast_tts
                 load_model = fast_tts.load
-            app.state.tts = await asyncio.get_running_loop().run_in_executor(
-                executor, partial(load_model, model_id=model, device=device, max_seq_len=max_seq_len))
-            log.info("Loaded speech model: %s", app.state.tts.plan)
-            yield
-            app.state.tts = None
+            app.state.engine = await asyncio.get_running_loop().run_in_executor(
+                executor, partial(SpeechEngine, loader=load_model, design_model=model, device=device,
+                                  clone_model=clone_model, max_seq_len=max_seq_len, voices_dir=voices_dir,
+                                  selector=selector))
+            log.info("Loaded speech model: %s", app.state.engine.plan)
+            # Resume durable records left preparing by a previous process.
+            pending = await asyncio.get_running_loop().run_in_executor(
+                executor, lambda: list(app.state.engine.pending_ids()))
+            for npc_id in pending if clone_model else []:
+                queue_preparation(npc_id)
+            try:
+                yield
+            finally:
+                await asyncio.gather(*list(app.state.preparations.values()), return_exceptions=True)
+            app.state.engine = None
 
     app = FastAPI(title="Qwen3-TTS", lifespan=lifespan)
 
@@ -144,45 +183,47 @@ def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, l
 
     @app.get("/v1/models", dependencies=[Depends(authenticate)])
     async def models():
-        return {"object": "list", "data": [{"id": "qwen3-tts", "object": "model",
-                                              "created": 0, "owned_by": "local"}]}
+        names = ["qwen3-tts"] + (["qwen3-tts-0.6b"] if clone_model else [])
+        return {"object": "list", "data": [{"id": name, "object": "model", "created": 0,
+                                              "owned_by": "local"} for name in names]}
+
+    @app.get("/v1/voices/{npc_id}", dependencies=[Depends(authenticate)])
+    async def voice_status(npc_id: str):
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", npc_id):
+            raise HTTPException(400, "Invalid NPC ID")
+        _, metadata = app.state.engine.record(npc_id)
+        if metadata is None:
+            raise HTTPException(404, "Unknown NPC")
+        return {"npc_id": npc_id, "status": app.state.engine.status(npc_id),
+                "reference_seconds": metadata.get("reference_seconds"),
+                "error": metadata.get("error")}
 
     def synthesize(body: SpeechRequest):
         import torch
-        tts = app.state.tts
-        instruct = body.instructions or VOICES.get(body.voice, body.voice)
+        instruct = body.instructions or (None if body.npc_id else VOICES.get(body.voice, body.voice))
         with torch.inference_mode():
-            if body.seed is not None:
-                torch.manual_seed(body.seed)
-            if device.startswith("cuda"):
-                torch.cuda.set_device(device)
-                # Validate the actual prefill length before writing static KV caches.
-                prepared = tts._prepare_generation_custom(
-                    text=body.input, language=body.language, speaker=None,
-                    instruct=instruct, non_streaming_mode=True)
-                prompt_length = prepared[3].shape[1]
-                del prepared
-                if prompt_length + body.max_new_tokens >= max_seq_len:
-                    raise HTTPException(400, "Prompt plus max_new_tokens exceeds --max-seq-len. "
-                                        "Lower max_new_tokens or start the server with a larger sequence budget.")
             started = time.perf_counter()
-            wavs, sr = tts.generate_voice_design(
-                text=body.input, instruct=instruct, language=body.language,
-                temperature=body.temperature, max_new_tokens=body.max_new_tokens)
+            wavs, sr = app.state.engine.generate(body, instruct)
             wav = np.asarray(wavs[0])
             if wav.size == 0 or not np.isfinite(wav).all():
                 raise RuntimeError("Model produced empty or invalid audio")
             log.info("Generated %.2fs of audio in %.2fs", len(wav) / sr, time.perf_counter() - started)
-            return encode_audio(wav, sr, body.response_format, body.speed)
+            audio = encode_audio(wav, sr, body.response_format, body.speed)
+            status = app.state.engine.status(body.npc_id) if body.npc_id else None
+            return audio, status
 
     @app.post("/v1/audio/speech", dependencies=[Depends(authenticate)])
     async def speech(body: SpeechRequest):
         if body.model not in MODEL_NAMES:
             raise HTTPException(400, "Unknown model. Use qwen3-tts.")
+        if body.model in {"qwen3-tts-0.6b", CLONE_MODEL_ID} and not body.npc_id:
+            raise HTTPException(400, "The 0.6B Base model needs npc_id to select a saved voice.")
+        if body.npc_id and not clone_model:
+            raise HTTPException(400, "NPC cloning is disabled on this server.")
         if (body.speed != 1.0 or body.response_format in {"opus", "aac"}) and not shutil.which("ffmpeg"):
             raise HTTPException(400, "This format or speed requires ffmpeg on PATH.")
         try:
-            audio = await asyncio.get_running_loop().run_in_executor(app.state.executor, synthesize, body)
+            audio, status = await asyncio.get_running_loop().run_in_executor(app.state.executor, synthesize, body)
         except HTTPException:
             raise
         except ValueError as exc:
@@ -190,7 +231,10 @@ def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, l
         except Exception as exc:
             log.exception("Speech generation failed")
             raise HTTPException(500, "Speech generation failed; see server logs.") from exc
-        return Response(audio, media_type=MEDIA_TYPES[body.response_format])
+        return Response(audio, media_type=MEDIA_TYPES[body.response_format],
+                        headers={"X-Voice-Status": status} if status else None,
+                        background=BackgroundTask(prepare_after_response, body.npc_id)
+                        if status == "preparing" else None)
 
     return app
 
@@ -201,14 +245,20 @@ def main():
     parser.add_argument("--port", type=int, default=8001)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--model", default=None)
+    parser.add_argument("--clone-model", default=str(LOCAL_CLONE_MODEL), help="Local 0.6B Base model directory")
+    parser.add_argument("--voices-dir", default="voices", help="Persistent NPC voice directory")
+    parser.add_argument("--design-only", action="store_true", help="Disable NPC cloning and use only VoiceDesign")
     parser.add_argument("--max-seq-len", type=int, default=4096)
     args = parser.parse_args()
     if args.max_seq_len < 128:
         parser.error("--max-seq-len must be at least 128")
+    if not args.design_only and not (Path(args.clone_model) / "model.safetensors").is_file():
+        parser.error("Clone model missing. Download 0.6B Base with hf, set --clone-model, or use --design-only.")
     logging.basicConfig(level=logging.INFO)
     import uvicorn
     uvicorn.run(create_app(device=args.device, model=args.model, max_seq_len=args.max_seq_len,
-                           api_key=os.environ.get("TTS_API_KEY")), host=args.host, port=args.port)
+                           api_key=os.environ.get("TTS_API_KEY"), voices_dir=args.voices_dir,
+                           clone_model=None if args.design_only else args.clone_model), host=args.host, port=args.port)
 
 
 if __name__ == "__main__":
