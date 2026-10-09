@@ -19,13 +19,15 @@ import numpy as np
 import soundfile as sf
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from npc_tts import CLONE_MODEL_ID, LOCAL_CLONE_MODEL, SpeechEngine
+from narrator_tts import LOCAL_MODEL as LOCAL_KOKORO_MODEL, MODEL_ID as KOKORO_MODEL_ID
 from starlette.background import BackgroundTask
 
 MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
 MODEL_NAMES = {"qwen3-tts", MODEL_ID, "tts-1", "tts-1-hd", "gpt-4o-mini-tts", "qwen3-tts-0.6b", CLONE_MODEL_ID}
+KOKORO_NAMES = {"kokoro", KOKORO_MODEL_ID}
 VOICES = {
     "alloy": "A warm, clear narrator with a neutral American accent.",
     "ash": "A calm male voice with a clear, conversational delivery.",
@@ -51,12 +53,13 @@ log = logging.getLogger("qwen3-tts.server")
 class SpeechRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: str
-    input: str = Field(min_length=1, max_length=4096)
+    input: str = Field(min_length=1, max_length=16384)
     voice: str = Field(default="alloy", min_length=1, max_length=4096)
     instructions: str | None = Field(default=None, max_length=4096)
     response_format: Literal["wav", "mp3", "flac", "pcm", "opus", "aac"] = "mp3"
     speed: float = Field(default=1.0, ge=0.25, le=4.0)
     stream_format: Literal["audio"] = "audio"
+    stream: bool = False  # Local extension: Kokoro PCM chunks during synthesis.
     # Qwen-specific extensions; pass through extra_body with the OpenAI SDK.
     language: str = "English"
     seed: int | None = Field(default=None, ge=0, le=2**63 - 1)
@@ -106,7 +109,9 @@ def encode_audio(wav: np.ndarray, sample_rate: int, fmt: str, speed: float) -> b
 
 
 def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, loader=None,
-               clone_model=str(LOCAL_CLONE_MODEL), voices_dir="voices", selector=None):
+               clone_model=str(LOCAL_CLONE_MODEL), voices_dir="voices", selector=None,
+               kokoro_enabled=True, kokoro_loader=None, kokoro_model_dir=LOCAL_KOKORO_MODEL,
+               kokoro_device="cpu"):
     def prepare_worker(engine, npc_id):
         try:
             engine.prepare(npc_id)
@@ -133,8 +138,11 @@ def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, l
     async def lifespan(app):
         # Load and generate on one dedicated thread. CUDA graphs and their caches
         # must never be used by concurrent requests.
-        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="tts") as executor:
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="tts") as executor, \
+                ThreadPoolExecutor(max_workers=1, thread_name_prefix="narrator") as narrator_executor:
             app.state.executor = executor
+            app.state.narrator_executor = narrator_executor
+            app.state.narrator = None
             app.state.preparations = {}
             load_model = loader
             if load_model is None:
@@ -145,6 +153,16 @@ def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, l
                                   clone_model=clone_model, max_seq_len=max_seq_len, voices_dir=voices_dir,
                                   selector=selector))
             log.info("Loaded speech model: %s", app.state.engine.plan)
+            if kokoro_enabled:
+                if kokoro_loader is None:
+                    from narrator_tts import NarratorEngine
+                    load_narrator = NarratorEngine
+                else:
+                    load_narrator = kokoro_loader
+                app.state.narrator = await asyncio.get_running_loop().run_in_executor(
+                    narrator_executor, partial(load_narrator, model_dir=kokoro_model_dir,
+                                                device=kokoro_device))
+                log.info("Loaded Kokoro narrator on %s", kokoro_device)
             # Resume durable records left preparing by a previous process.
             pending = await asyncio.get_running_loop().run_in_executor(
                 executor, lambda: list(app.state.engine.pending_ids()))
@@ -155,6 +173,7 @@ def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, l
             finally:
                 await asyncio.gather(*list(app.state.preparations.values()), return_exceptions=True)
             app.state.engine = None
+            app.state.narrator = None
 
     app = FastAPI(title="Qwen3-TTS", lifespan=lifespan)
 
@@ -183,9 +202,16 @@ def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, l
 
     @app.get("/v1/models", dependencies=[Depends(authenticate)])
     async def models():
-        names = ["qwen3-tts"] + (["qwen3-tts-0.6b"] if clone_model else [])
+        names = ["qwen3-tts"] + (["qwen3-tts-0.6b"] if clone_model else []) + (["kokoro"] if kokoro_enabled else [])
         return {"object": "list", "data": [{"id": name, "object": "model", "created": 0,
                                               "owned_by": "local"} for name in names]}
+
+    @app.get("/v1/voices", dependencies=[Depends(authenticate)])
+    async def preset_voices():
+        narrator = app.state.narrator
+        return {"object": "list", "data": [{"id": voice, "model": "kokoro", "language": "English",
+                                             "accent": "American" if voice[0] == "a" else "British"}
+                                            for voice in narrator.voices] if narrator else []}
 
     @app.get("/v1/voices/{npc_id}", dependencies=[Depends(authenticate)])
     async def voice_status(npc_id: str):
@@ -212,17 +238,81 @@ def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, l
             status = app.state.engine.status(body.npc_id) if body.npc_id else None
             return audio, status
 
+    def narrate(body):
+        started = time.perf_counter()
+        wav, sr = app.state.narrator.generate(body)
+        log.info("Kokoro generated %.2fs audio in %.2fs", len(wav) / sr, time.perf_counter() - started)
+        # Kokoro applies speed while synthesizing; do not apply it a second time.
+        return encode_audio(wav, sr, body.response_format, 1.0)
+
+    def next_pcm(iterator):
+        wav = next(iterator, None)
+        return None if wav is None else encode_audio(wav, 24000, "pcm", 1.0)
+
+    async def narrate_response(body):
+        if app.state.narrator is None:
+            raise HTTPException(400, "Kokoro is disabled on this server")
+        app.state.narrator.validate(body)
+        loop, executor = asyncio.get_running_loop(), app.state.narrator_executor
+        if not body.stream:
+            audio = await loop.run_in_executor(executor, narrate, body)
+            return Response(audio, media_type=MEDIA_TYPES[body.response_format])
+        if body.response_format != "pcm":
+            raise ValueError("Kokoro streaming requires response_format=pcm (24 kHz mono, signed 16-bit little-endian)")
+        iterator = app.state.narrator.chunks(body)
+        try:
+            first = await loop.run_in_executor(executor, next_pcm, iterator)
+            if first is None:
+                raise ValueError("Input contains no speakable text")
+        except BaseException:
+            # Closing on the same worker waits for any cancelled, still-running
+            # inference before touching the generator.
+            await loop.run_in_executor(executor, iterator.close)
+            raise
+
+        async def audio_chunks():
+            try:
+                yield first
+                while True:
+                    chunk = await loop.run_in_executor(executor, next_pcm, iterator)
+                    if chunk is None:
+                        break
+                    yield chunk
+            except Exception:
+                log.exception("Kokoro stream failed after audio delivery started")
+                raise
+
+        class NarrationStream(StreamingResponse):
+            async def __call__(self, scope, receive, send):
+                try:
+                    await super().__call__(scope, receive, send)
+                finally:
+                    # ASGI send can fail while the generator is suspended at a
+                    # yield. Explicitly close both iterators on disconnection.
+                    await self.body_iterator.aclose()
+                    await loop.run_in_executor(executor, iterator.close)
+
+        return NarrationStream(audio_chunks(), media_type=MEDIA_TYPES["pcm"],
+                               headers={"X-Audio-Sample-Rate": "24000", "X-Audio-Channels": "1"})
+
     @app.post("/v1/audio/speech", dependencies=[Depends(authenticate)])
     async def speech(body: SpeechRequest):
-        if body.model not in MODEL_NAMES:
-            raise HTTPException(400, "Unknown model. Use qwen3-tts.")
+        is_kokoro = body.model in KOKORO_NAMES
+        if body.model not in MODEL_NAMES and not is_kokoro:
+            raise HTTPException(400, "Unknown model. Use qwen3-tts or kokoro.")
+        if not is_kokoro and len(body.input) > 4096:
+            raise HTTPException(400, "Qwen input accepts up to 4096 characters")
+        if body.stream and not is_kokoro:
+            raise HTTPException(400, "Streaming during generation is supported for Kokoro PCM only")
         if body.model in {"qwen3-tts-0.6b", CLONE_MODEL_ID} and not body.npc_id:
             raise HTTPException(400, "The 0.6B Base model needs npc_id to select a saved voice.")
-        if body.npc_id and not clone_model:
+        if body.npc_id and not clone_model and not is_kokoro:
             raise HTTPException(400, "NPC cloning is disabled on this server.")
-        if (body.speed != 1.0 or body.response_format in {"opus", "aac"}) and not shutil.which("ffmpeg"):
+        if ((body.speed != 1.0 and not is_kokoro) or body.response_format in {"opus", "aac"}) and not shutil.which("ffmpeg"):
             raise HTTPException(400, "This format or speed requires ffmpeg on PATH.")
         try:
+            if is_kokoro:
+                return await narrate_response(body)
             audio, status = await asyncio.get_running_loop().run_in_executor(app.state.executor, synthesize, body)
         except HTTPException:
             raise
@@ -248,6 +338,9 @@ def main():
     parser.add_argument("--clone-model", default=str(LOCAL_CLONE_MODEL), help="Local 0.6B Base model directory")
     parser.add_argument("--voices-dir", default="voices", help="Persistent NPC voice directory")
     parser.add_argument("--design-only", action="store_true", help="Disable NPC cloning and use only VoiceDesign")
+    parser.add_argument("--no-kokoro", action="store_true", help="Disable the Kokoro narrator backend")
+    parser.add_argument("--kokoro-model", default=str(LOCAL_KOKORO_MODEL), help="Local Kokoro model and English voices directory")
+    parser.add_argument("--kokoro-device", default="cpu", help="Device for narration, independently of Qwen")
     parser.add_argument("--max-seq-len", type=int, default=4096)
     args = parser.parse_args()
     if args.max_seq_len < 128:
@@ -255,9 +348,12 @@ def main():
     if not args.design_only and not (Path(args.clone_model) / "model.safetensors").is_file():
         parser.error("Clone model missing. Download 0.6B Base with hf, set --clone-model, or use --design-only.")
     logging.basicConfig(level=logging.INFO)
+    os.environ.setdefault("OMP_NUM_THREADS", "4")
     import uvicorn
     uvicorn.run(create_app(device=args.device, model=args.model, max_seq_len=args.max_seq_len,
                            api_key=os.environ.get("TTS_API_KEY"), voices_dir=args.voices_dir,
+                           kokoro_enabled=not args.no_kokoro, kokoro_model_dir=args.kokoro_model,
+                           kokoro_device=args.kokoro_device,
                            clone_model=None if args.design_only else args.clone_model), host=args.host, port=args.port)
 
 

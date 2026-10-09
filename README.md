@@ -75,8 +75,10 @@ OMP_NUM_THREADS=4 .venv/bin/python server.py --device cuda:0 --port 8001
 
 The server loads the 0.6B Base model and captures CUDA graphs at startup. It switches to
 VoiceDesign when a request needs a new voice, then switches back to the smaller model for NPC
-dialogue. Only one model remains loaded at a time. Requests queue on one generation thread
-so the GPU's shared caches cannot overlap. The server binds to localhost by default.
+dialogue. Only one Qwen model remains loaded at a time. Qwen requests queue on one generation
+thread so the GPU's shared caches cannot overlap. Kokoro narration runs on a separate CPU
+worker and stays resident. Download its local files as described below before starting, or use
+`--no-kokoro` to disable narration. The server binds to localhost by default.
 Use `--device cpu` for CPU generation, or `--model /path/to/model` for another model directory.
 The default CUDA sequence budget is 4096; adjust with `--max-seq-len`.
 Use `--design-only` to run the original VoiceDesign endpoint without the smaller model.
@@ -108,7 +110,8 @@ with client.audio.speech.with_streaming_response.create(
 The request follows the [OpenAI speech API format](https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create),
 with these local behaviors:
 
-- `POST /v1/audio/speech` returns binary audio; `GET /v1/models` lists `qwen3-tts`.
+- `POST /v1/audio/speech` returns binary audio; `GET /v1/models` lists enabled backends,
+  including `qwen3-tts`, `qwen3-tts-0.6b`, and `kokoro`.
 - Formats: WAV, MP3 (the API default), FLAC, PCM, Opus, and AAC. PCM is raw little-endian
   16-bit mono at 24 kHz. Opus, AAC, and speed changes require `ffmpeg`, installed on this machine.
 - `instructions` supplies the complete voice description. Without it, `voice` selects a local
@@ -117,10 +120,10 @@ with these local behaviors:
 - `tts-1`, `tts-1-hd`, and `gpt-4o-mini-tts` are accepted as aliases for the local Qwen model.
 - `speed` supports 0.25–4.0 through pitch-preserving audio processing.
 - Qwen extensions: `language`, `seed`, `temperature`, and `max_new_tokens` (default 2048 frames).
-  Input and instructions each accept up to 4096 characters. On CUDA, prompt tokens plus
+  Qwen input and instructions each accept up to 4096 characters. On CUDA, prompt tokens plus
   `max_new_tokens` must fit within `--max-seq-len`; requests exceeding this return HTTP 400.
-- Audio is returned after generation finishes. The SDK's streaming response helper works for
-  downloading it, but this server does not yet stream audio during generation or support SSE.
+- Qwen audio is returned after generation finishes. Kokoro can stream PCM during generation
+  with the local `stream` extension described below. SSE is not supported.
 - Optional authentication: set `TTS_API_KEY` before starting the server and send that key as a
   Bearer token. Without it, no key is required; SDK clients can use a placeholder such as `local`.
 
@@ -129,6 +132,88 @@ Run request, encoding, authentication, and concurrency tests with
 `.venv/bin/python -m unittest discover -s tests -v`.
 With a GPU server running on port 8001, `.venv/bin/python tests/smoke_endpoint.py` verifies real
 HTTP generation in all six formats, speed changes, and request validation.
+
+## Fast narrator with Kokoro
+
+The same endpoint supports [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) for long
+narration with preset voices. The default configuration runs Kokoro on CPU with its own worker,
+so NPC generation on the GPU does not block narration. English (American and British) is
+supported here. The model weights are approximately 313 MiB.
+
+`requirements.txt` includes Kokoro and the small English spaCy model. Download the weights,
+configuration, and English voices once:
+
+```bash
+uv pip install --python .venv/bin/python -r requirements.txt
+.venv/bin/hf download hexgrad/Kokoro-82M config.json kokoro-v1_0.pth --local-dir models/kokoro
+.venv/bin/hf download hexgrad/Kokoro-82M --include 'voices/[ab]*.pt' --local-dir models/kokoro
+HF_HUB_OFFLINE=1 OMP_NUM_THREADS=4 .venv/bin/python server.py --device cuda:0 --port 8001
+```
+
+Model and voice loading uses these local files; requests do not download missing voices.
+The Python dependencies include an eSpeak NG library for unusual English words, so this
+backend does not need a system-wide eSpeak installation.
+
+For a complete WAV file:
+
+```bash
+curl http://127.0.0.1:8001/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"kokoro","voice":"narrator","input":"The ancient gates swing open. Beyond them, a forgotten kingdom waits.","response_format":"wav"}' \
+  --output narration.wav
+```
+
+`narrator` selects `bm_george`, a British male voice. `alloy` (the API default) selects
+`af_alloy`. Use `GET /v1/voices` to list the installed Kokoro presets, then pass the preset's ID
+in `voice`. Kokoro requests omit `npc_id` and `instructions`; this backend selects a preset
+rather than designing or cloning a voice. `model="hexgrad/Kokoro-82M"` is also accepted.
+
+Narration accepts up to 16,384 characters and splits text at sentence boundaries, splitting
+long sentences between words before the model's phoneme limit. Each resulting audio segment
+is included in the output; paragraph lengths do not depend on Qwen's `max_new_tokens`.
+WAV, MP3, FLAC, PCM, Opus, and AAC use the same format handling as Qwen. `speed` is applied
+natively by Kokoro once. Qwen-specific `seed`, `temperature`, and `max_new_tokens` do not
+control Kokoro generation. `language` accepts `English` or `Auto` for these English presets.
+
+For playback before the whole paragraph finishes, request `response_format="pcm"` and
+`stream=true`. The server returns HTTP chunks of raw **24 kHz, mono, signed 16-bit little-endian
+PCM**. It sends the first generated segment and generates the rest as the client consumes
+the response. The chunks form one continuous PCM stream; they are not individual WAV files.
+The response includes `X-Audio-Sample-Rate: 24000` and `X-Audio-Channels: 1`.
+
+```python
+with client.audio.speech.with_streaming_response.create(
+    model="kokoro",
+    voice="narrator",
+    input=paragraph,
+    response_format="pcm",
+    extra_body={"stream": True},
+) as response:
+    for chunk in response.iter_bytes():
+        # Feed bytes into the game's 24 kHz mono PCM playback buffer.
+        playback_buffer.write(chunk)
+```
+
+Network chunk boundaries can split a 16-bit sample, so a playback implementation should retain
+an unmatched byte until the next chunk arrives. Merely using the SDK's streaming helper does
+not enable generation streaming without `extra_body={"stream": True}`. Other formats return
+complete audio files; requesting generation streaming for them returns HTTP 400. Disconnecting
+closes the generator after any current CPU inference finishes.
+
+Use `--kokoro-model /path/to/kokoro` to change storage, `--kokoro-device cuda:0` to try GPU
+narration, or `--no-kokoro` to disable this backend. The server defaults to four OpenMP CPU
+threads unless `OMP_NUM_THREADS` is already set. `--design-only` disables NPC cloning while
+leaving Kokoro available.
+
+Run `.venv/bin/python tests/smoke_narrator.py` against port 8001 to measure paragraph generation
+and first streamed audio, test native speed and formats, and exercise simultaneous NPC speech
+when its saved test voice exists. Output audio and timings are saved under `out/narrator/`.
+
+Measured here on the Ryzen 5800X3D with four CPU threads: the test paragraph produced
+27.50 seconds of audio in 6.06–6.21 seconds after warmup. PCM streaming delivered its first
+audio in 0.48 seconds and finished in 6.05 seconds. While narration was running, a GPU NPC
+request completed in 1.85 seconds. These are samples with `bm_george`; text, sentence length,
+voice, and other workloads affect timing. The CPU model adds no GPU weights.
 
 ## Persistent NPC voices
 

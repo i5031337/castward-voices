@@ -43,7 +43,8 @@ class ServerTests(unittest.TestCase):
             self.loads.append((kwargs, threading.get_ident()))
             return self.tts
 
-        self.client = TestClient(create_app(device="cpu", api_key="test-key", loader=loader, clone_model=None))
+        self.client = TestClient(create_app(device="cpu", api_key="test-key", loader=loader,
+                                            clone_model=None, kokoro_enabled=False))
         self.client.__enter__()
         self.headers = {"Authorization": "Bearer test-key"}
 

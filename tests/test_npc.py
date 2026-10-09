@@ -58,7 +58,7 @@ class NPCTests(unittest.TestCase):
         self.start()
 
     def start(self):
-        self.client = TestClient(create_app(device="cpu", clone_model="fake-clone", loader=self.loader,
+        self.client = TestClient(create_app(device="cpu", clone_model="fake-clone", loader=self.loader, kokoro_enabled=False,
                                             voices_dir=self.storage.name))
         self.client.__enter__()
 
@@ -158,7 +158,8 @@ class NPCTests(unittest.TestCase):
                 return model
 
             with tempfile.TemporaryDirectory() as directory:
-                app = create_app(device="cpu", clone_model="fake-clone", loader=loader, voices_dir=directory)
+                app = create_app(device="cpu", clone_model="fake-clone", loader=loader, voices_dir=directory,
+                                 kokoro_enabled=False)
                 async with app.router.lifespan_context(app):
                     body = json.dumps({"model": "qwen3-tts", "input": "Hello", "npc_id": "first",
                                        "instructions": "A guard", "response_format": "wav"}).encode()
@@ -184,7 +185,7 @@ class NPCTests(unittest.TestCase):
         async def exercise():
             with tempfile.TemporaryDirectory() as directory:
                 def app():
-                    return create_app(device="cpu", clone_model="fake-clone", loader=self.loader,
+                    return create_app(device="cpu", clone_model="fake-clone", loader=self.loader, kokoro_enabled=False,
                                       voices_dir=directory)
                 first = app()
                 async with first.router.lifespan_context(first):
