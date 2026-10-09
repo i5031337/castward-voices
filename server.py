@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from npc_tts import CLONE_MODEL_ID, LOCAL_CLONE_MODEL, SpeechEngine
 from narrator_tts import LOCAL_MODEL as LOCAL_KOKORO_MODEL, MODEL_ID as KOKORO_MODEL_ID
+from sillynpc_bridge import decode_sillynpc_voice
 from starlette.background import BackgroundTask
 
 MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
@@ -298,6 +299,10 @@ def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, l
 
     @app.post("/v1/audio/speech", dependencies=[Depends(authenticate)])
     async def speech(body: SpeechRequest):
+        try:
+            body = decode_sillynpc_voice(body)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
         is_kokoro = body.model in KOKORO_NAMES
         if body.model not in MODEL_NAMES and not is_kokoro:
             raise HTTPException(400, "Unknown model. Use qwen3-tts or kokoro.")

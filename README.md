@@ -141,6 +141,22 @@ with these local behaviors:
 - Optional authentication: set `TTS_API_KEY` before starting the server and send that key as a
   Bearer token. Without it, no key is required; SDK clients can use a placeholder such as `local`.
 
+### SillyNPC through SillyTavern's existing speech proxy
+
+SillyTavern's custom OpenAI Compatible speech proxy forwards `voice` but omits
+`npc_id`, `instructions`, and `max_new_tokens`. The SillyNPC extension sends those
+three fields as URL-safe base64 JSON in a `sillynpc-v1:` voice value when its NPC
+model is `qwen3-tts`. This server decodes that value before synthesis. It accepts
+the encoded form only with `model: "qwen3-tts"`, validates the NPC ID, description,
+and token budget, and leaves ordinary voice requests unchanged. The local service
+must be restarted after updating `server.py`; no SillyTavern server patch or
+second API key is needed. Keep the built-in OpenAI Compatible endpoint pointed at
+this service and store any optional key in SillyTavern's TTS secret as usual.
+
+SillyNPC uses `kokoro` and a preset voice for narration. NPC voice descriptions
+are stored on their cards; changing one advances its voice version and creates a
+new persistent server voice on the next line or explicit preview.
+
 `GET /health` reports readiness after model loading. Interactive API documentation is at `/docs`.
 Run request, encoding, authentication, and concurrency tests with
 `.venv/bin/python -m unittest discover -s tests -v`.

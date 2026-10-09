@@ -1,4 +1,6 @@
 import io
+import base64
+import json
 import threading
 import time
 import unittest
@@ -8,7 +10,25 @@ import numpy as np
 import soundfile as sf
 from fastapi.testclient import TestClient
 
-from server import create_app, encode_audio
+from server import SpeechRequest, create_app, decode_sillynpc_voice, encode_audio
+
+
+class SillyNpcProxyTests(unittest.TestCase):
+    def test_encoded_voice_recovers_npc_fields(self):
+        fields = {"npc_id": "sn_card-123_v2", "instructions": "A warm, soft voice — clear and calm.",
+                  "max_new_tokens": 128}
+        voice = "sillynpc-v1:" + base64.urlsafe_b64encode(json.dumps(fields).encode()).decode().rstrip("=")
+        body = decode_sillynpc_voice(SpeechRequest(model="qwen3-tts", input="Hello", voice=voice))
+        self.assertEqual(body.npc_id, fields["npc_id"])
+        self.assertEqual(body.instructions, fields["instructions"])
+        self.assertEqual(body.max_new_tokens, 128)
+        self.assertEqual(body.voice, "alloy")
+        self.assertEqual(decode_sillynpc_voice(SpeechRequest(model="kokoro", input="Hello", voice="alloy")).voice,
+                         "alloy")
+        with self.assertRaises(ValueError):
+            decode_sillynpc_voice(SpeechRequest(model="kokoro", input="Hello", voice=voice))
+        with self.assertRaises(ValueError):
+            decode_sillynpc_voice(SpeechRequest(model="qwen3-tts", input="Hello", voice="sillynpc-v1:bad!"))
 
 
 class FakeTTS:
