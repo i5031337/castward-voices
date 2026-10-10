@@ -7,15 +7,19 @@ that adapts to the GPU, down to 4 GB cards like the GTX 1650 Ti.
 
 ## Setup
 
-The fast path requires an NVIDIA GPU (Turing / GTX 16-series or newer) with a driver supporting CUDA 12.8 (R570+).
-CPU generation is also available with `--device cpu`, using the standard Qwen3-TTS implementation.
+Qwen generation supports NVIDIA CUDA GPUs or CPU. The fast path requires an NVIDIA GPU
+(Turing / GTX 16-series or newer) with a driver supporting CUDA 12.8 (R570+).
+Use `--device cpu` for the slower standard Qwen3-TTS implementation. Other PyTorch GPU
+backends (such as ROCm, MPS, and XPU) are not supported or tested by this Qwen loader.
+The requirements and lock file below select CUDA PyTorch packages; the CUDA build can
+also run the CPU path without an NVIDIA GPU.
 
 ```bash
 uv venv --python 3.11 .venv
 uv pip install --python .venv -r requirements.txt
 ```
 
-`requirements.lock.txt` records the exact versions installed and tested on this Linux machine.
+`requirements.lock.txt` records the exact CUDA versions installed and tested on this Linux machine.
 To reproduce them, use `uv pip install --python .venv/bin/python -r requirements.lock.txt`.
 
 If `model/model.safetensors` exists, the loader uses the local `model/` directory automatically.
@@ -79,6 +83,9 @@ dialogue. Only one Qwen model remains loaded at a time. Qwen requests queue on o
 thread so the GPU's shared caches cannot overlap. Kokoro narration runs on a separate CPU
 worker and stays resident. Download its local files as described below before starting, or use
 `--no-kokoro` to disable narration. The server binds to localhost by default.
+For a few users on a trusted local network, pass `--host 0.0.0.0` and connect to the
+server's LAN IP. Set `TTS_API_KEY` if access on that network should be restricted;
+do not forward this HTTP service directly to the internet.
 Use `--device cpu` for CPU generation, or `--model /path/to/model` for another model directory.
 Use `--clone-device cpu` to run only the 0.6B Base cloning model on CPU while VoiceDesign
 continues on the GPU. On a Windows GTX 1650 Ti, this avoids a CUDA assertion in the fast
@@ -127,7 +134,9 @@ with these local behaviors:
 - `POST /v1/audio/speech` returns binary audio; `GET /v1/models` lists enabled backends,
   including `qwen3-tts`, `qwen3-tts-0.6b`, and `kokoro`.
 - Formats: WAV, MP3 (the API default), FLAC, PCM, Opus, and AAC. PCM is raw little-endian
-  16-bit mono at 24 kHz. Opus, AAC, and speed changes require `ffmpeg`, installed on this machine.
+  16-bit mono at 24 kHz. Opus and AAC require `ffmpeg` on `PATH`. Qwen speed changes
+  also use FFmpeg to change tempo without shifting pitch. Kokoro handles speed during
+  synthesis, so its WAV, MP3, FLAC, and PCM output does not need FFmpeg.
 - `instructions` supplies the complete voice description. Without it, `voice` selects a local
   description preset, or can itself be a free-form description. Names such as `alloy` are
   convenience presets, not replicas of OpenAI voices or fixed character identities.
@@ -377,3 +386,8 @@ Reference: GTX 1650 Ti 4 GB → fp16, gemv on, embedding and decoder on CPU; 3.2
   save a generated clip and clone it with a Qwen3-TTS Base model.
 - On Windows, exceeding VRAM silently spills into slow shared memory instead of raising OOM.
 - The SoX and flash-attn warnings at startup are harmless.
+
+## License
+
+This project's code is licensed under the [Apache License 2.0](LICENSE).
+Downloaded model weights and third-party dependencies retain their own licenses.

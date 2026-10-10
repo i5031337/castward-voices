@@ -1,6 +1,7 @@
 import asyncio
 import io
 import json
+import shutil
 import tempfile
 import threading
 import unittest
@@ -61,6 +62,10 @@ class NarratorTests(unittest.TestCase):
     def test_routing_formats_speed_and_model_discovery(self):
         for fmt in ("wav", "flac", "mp3", "pcm", "opus", "aac"):
             response = self.request(response_format=fmt, speed=1.5)
+            if fmt in {"opus", "aac"} and not shutil.which("ffmpeg"):
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("requires ffmpeg", response.json()["error"]["message"])
+                continue
             self.assertEqual(response.status_code, 200, response.text if response.status_code != 200 else "")
             if fmt == "wav":
                 wav, sr = sf.read(io.BytesIO(response.content))
