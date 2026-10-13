@@ -7,7 +7,40 @@ import numpy as np
 MODEL_ID = "hexgrad/Kokoro-82M"
 LOCAL_MODEL = Path(__file__).resolve().parent / "models" / "kokoro"
 SAMPLE_RATE = 24000
-VOICE_ALIASES = {"alloy": "af_alloy", "narrator": "bm_george"}
+VOICE_ALIASES = {
+    # American English (Female)
+    "alloy": "af_alloy",
+    "aoede": "af_aoede",
+    "bella": "af_bella",
+    "heart": "af_heart",
+    "jessica": "af_jessica",
+    "kore": "af_kore",
+    "nicole": "af_nicole",
+    "nova": "af_nova",
+    "river": "af_river",
+    "sarah": "af_sarah",
+    "sky": "af_sky",
+    # American English (Male)
+    "adam": "am_adam",
+    "echo": "am_echo",
+    "eric": "am_eric",
+    "fenrir": "am_fenrir",
+    "liam": "am_liam",
+    "michael": "am_michael",
+    "onyx": "am_onyx",
+    "puck": "am_puck",
+    "santa": "am_santa",
+    # British English (Female)
+    "alice": "bf_alice",
+    "emma": "bf_emma",
+    "isabella": "bf_isabella",
+    "lily": "bf_lily",
+    # British English (Male)
+    "daniel": "bm_daniel",
+    "fable": "bm_fable",
+    "george": "bm_george",
+    "lewis": "bm_lewis",
+}
 
 
 def text_chunks(text, limit=240):
@@ -51,6 +84,7 @@ class NarratorEngine:
         self.packs = {voice: torch.load(self.model_dir / "voices" / f"{voice}.pt",
                                         map_location="cpu", weights_only=True)
                       for voice in self.voices}
+        self.aliases = {**VOICE_ALIASES, **{v.split("_", 1)[1]: v for v in self.voices if "_" in v}}
 
     def validate(self, body):
         if body.npc_id:
@@ -59,9 +93,12 @@ class NarratorEngine:
             raise ValueError("Kokoro uses preset voices; omit instructions and select voice")
         if body.language.lower() not in {"english", "auto"}:
             raise ValueError("This Kokoro backend supports English narration only")
-        voice = VOICE_ALIASES.get(body.voice, body.voice)
+        aliases = getattr(self, "aliases", None)
+        if aliases is None:
+            aliases = {**VOICE_ALIASES, **{v.split("_", 1)[1]: v for v in self.voices if "_" in v}}
+        voice = aliases.get(body.voice, body.voice)
         if voice not in self.voices:
-            raise ValueError("Unknown Kokoro voice. Use narrator, alloy, or GET /v1/voices for presets")
+            raise ValueError("Unknown Kokoro voice. Use george, alloy, or GET /v1/voices for presets")
         # Check pathological words before starting any streaming response.
         if any(len(word) > 240 for word in body.input.split()):
             raise ValueError("Narration contains a word longer than 240 characters")
