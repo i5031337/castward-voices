@@ -3,6 +3,7 @@ import hashlib
 import json
 import tempfile
 import unittest
+import weakref
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ import numpy as np
 from fastapi.testclient import TestClient
 
 from server import SpeechRequest, create_app
+from npc_tts import SpeechEngine
 
 
 class FakeModel:
@@ -57,9 +59,9 @@ class NPCTests(unittest.TestCase):
         self.loader = loader
         self.start()
 
-    def start(self):
+    def start(self, *, keep_models_loaded=False):
         self.client = TestClient(create_app(device="cpu", clone_model="fake-clone", loader=self.loader, kokoro_enabled=False,
-                                            voices_dir=self.storage.name))
+                                            voices_dir=self.storage.name, keep_models_loaded=keep_models_loaded))
         self.client.__enter__()
 
     def tearDown(self):
@@ -86,6 +88,40 @@ class NPCTests(unittest.TestCase):
         self.assertEqual([kind for kind, _ in self.calls].count("clone"), 2)
         self.assertEqual(self.loads, ["fake-clone", None, "fake-clone", "fake-clone"])
         self.assertEqual(json.loads((folder / "metadata.json").read_text())["ref_text"], "Hello")
+
+    def test_resident_models_are_preloaded_and_reused_for_creation_and_dialogue(self):
+        self.client.__exit__(None, None, None)
+        self.loads.clear()
+        self.start(keep_models_loaded=True)
+        self.assertEqual(self.loads, ["fake-clone", None])
+        models = dict(self.client.app.state.engine.loaded_models)
+        self.assertEqual(set(models), {"clone", "design"})
+        for body in ({"instructions": "A guard"}, {},
+                     {"npc_id": "guard-2", "instructions": "Another guard"}, {}):
+            self.assertEqual(self.request(**body).status_code, 200)
+        self.assertEqual(self.loads, ["fake-clone", None])
+        self.assertIs(self.client.app.state.engine.tts, models["clone"])
+        self.assertTrue(self.client.get("/health").json()["keep_models_loaded"])
+
+    def test_default_swapping_releases_old_model(self):
+        with tempfile.TemporaryDirectory() as storage:
+            engine = SpeechEngine(loader=self.loader, device="cpu", design_model=None,
+                                  clone_model="fake-clone", max_seq_len=1024, voices_dir=storage)
+            old_model = weakref.ref(engine.tts)
+            engine.get("design")
+            self.assertIsNone(old_model())
+            self.assertEqual(engine.loaded_models, {})
+
+    def test_resident_design_only_loads_one_available_model(self):
+        with tempfile.TemporaryDirectory() as storage:
+            self.loads.clear()
+            engine = SpeechEngine(loader=self.loader, device="cpu", design_model=None,
+                                  clone_model=None, max_seq_len=1024, voices_dir=storage,
+                                  keep_models_loaded=True)
+            self.assertEqual(self.loads, [None])
+            self.assertIs(engine.get("design"), engine.loaded_models["design"])
+            with self.assertRaisesRegex(ValueError, "cloning is disabled"):
+                engine.get("clone")
 
     def test_concurrent_creation_only_creates_one_reference(self):
         with ThreadPoolExecutor(max_workers=3) as executor:

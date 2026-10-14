@@ -1,11 +1,13 @@
 """Kokoro narration with local preset voices and bounded English text chunks."""
 import re
+import threading
 from pathlib import Path
 
 import numpy as np
 
 MODEL_ID = "hexgrad/Kokoro-82M"
 LOCAL_MODEL = Path(__file__).resolve().parent / "models" / "kokoro"
+MODEL_LOAD_LOCK = threading.RLock()
 SAMPLE_RATE = 24000
 VOICE_ALIASES = {
     # American English (Female)
@@ -112,7 +114,10 @@ class NarratorEngine:
             # Do not hold a thread-local inference context across a generator yield.
             results = iter(pipeline(text, voice=self.packs[voice], speed=body.speed))
             while True:
-                with torch.inference_mode():
+                # Transformers temporarily changes the process-wide default
+                # dtype while loading Qwen. Kokoro creates FP32 intermediates
+                # using that default, so model loading cannot overlap this step.
+                with MODEL_LOAD_LOCK, torch.inference_mode():
                     result = next(results, None)
                 if result is None:
                     break

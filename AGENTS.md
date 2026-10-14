@@ -10,7 +10,7 @@ The server unifies three models into a single OpenAI-compatible HTTP service, ea
 
 | Model | Hardware | Primary Role | Lifecycle |
 |---|---|---|---|
-| **Kokoro-82M** | CPU | Long-form narrator speech & real-time PCM streaming | Stays permanently resident on dedicated CPU thread |
+| **Kokoro-82M** | CPU by default; optional GPU | Long-form narrator speech & real-time PCM streaming | Stays permanently resident; CUDA mode shares Qwen's worker |
 | **Qwen3-TTS 1.7B VoiceDesign** | GPU (or CPU) | Zero-shot NPC creation from natural language text | Loaded on-demand when creating new character voices |
 | **Qwen3-TTS 0.6B Base** | GPU (or CPU) | High-speed dialogue generation using cloned NPC voices | Default resident Qwen model; executes via CUDA graphs |
 
@@ -44,11 +44,21 @@ CUDA graphs and static decoding KV caches cannot be accessed concurrently. The s
 * **GPU Worker (`tts`, max_workers=1)**: Serializes all Qwen model loads, CUDA graph warmups, and voice design/cloning inferences.
 * **CPU Worker (`narrator`, max_workers=1)**: Dedicated to Kokoro G2P phonemization and neural inference. Long narration requests run completely in parallel with GPU NPC dialogue without contention.
 
-### Dynamic VRAM Model Swapping
+`--kokoro-device cuda:0` moves Kokoro to GPU in FP32. CUDA Kokoro and any CUDA Qwen device use the same serial `tts` worker, preventing Kokoro kernels/allocations from interfering with global CUDA graph capture during model swaps. PCM streams submit one chunk at a time so queued Qwen requests can execute between chunks. Non-streaming narration occupies the shared worker through generation and encoding. CPU Kokoro keeps the independent worker. A process-wide `MODEL_LOAD_LOCK` protects Kokoro inference from the temporary default-dtype changes made by Transformers during Qwen loading; loaded-model CPU/GPU inference still runs in parallel.
+
+Kokoro loads before Qwen so its resident GPU weights are accounted for by the adaptive VRAM planner. The planner also respects PyTorch's per-process allocator memory cap.
+
+### Dynamic VRAM Model Swapping (Default)
 To keep peak VRAM under 4–6 GiB, the server holds only one Qwen model in GPU memory at a time:
 1. **Startup**: Loads `0.6B Base` and captures CUDA graphs.
 2. **New NPC (`instructions` provided)**: Drops `0.6B Base`, invokes garbage collection, frees PyTorch CUDA cache, and loads `1.7B VoiceDesign` to generate the initial dialogue line.
 3. **Return to Dialogue**: When subsequent requests arrive for saved NPCs, the server swaps back to `0.6B Base`, restoring the CUDA-graph decoding pipeline.
+
+### Optional Persistent Residency
+
+`--keep-models-loaded` preloads both Qwen models and captures their independent CUDA graphs during startup. `SpeechEngine.loaded_models` retains each pipeline; `get(kind)` selects the cached pipeline and its device without unloading, garbage collection, or graph recapture. Base remains the initial active model. Kokoro is permanently resident on its configured CPU/GPU device, so adding `--kokoro-device cuda:0` puts all three on GPU. The second Qwen loader sees the first model's live memory when computing its adaptive placement plan. Qwen inference remains serial, and CUDA Kokoro continues to share that worker. With cloning disabled, only VoiceDesign is preloaded. Default behavior still swaps Qwen models.
+
+Measured on an RTX 5060 Ti with all three on GPU and a 4096-token cache: **7.75 GiB peak allocated / 8.28 GiB peak reserved**, including startup, mixed narration/dialogue, switching between Qwen models, and a near-240-character Kokoro chunk. Allow approximately **9 GiB with headroom**; a 12 GB GPU is a comfortable target. These figures exclude driver/display and other processes; longer audio, slower speech, other voices, and larger caches can increase memory use. CPU offloading remains adaptive on smaller devices. Reproduce with `benchmark_narrator.py --kokoro-device cuda:0 --keep-models-loaded --output out/bench/all_models_gpu.json`.
 
 ---
 
@@ -116,7 +126,7 @@ Each NPC record is persisted under `voices/<sha256(npc_id)>/`:
 
 ## 4. Kokoro Narrator Backend (`narrator_tts.py`)
 
-* **G2P & Accents**: Initializes distinct `KPipeline` instances for American (`'a'`) and British (`'b'`) English phonemization, sharing a single CPU `KModel`.
+* **G2P & Accents**: Initializes distinct `KPipeline` instances for American (`'a'`) and British (`'b'`) English phonemization, sharing a single `KModel` on the configured CPU/GPU device. G2P remains on CPU.
 * **Local Pack Loading**: Tensor packs are loaded directly into memory (`self.packs`) on initialization, preventing Hugging Face Hub downloads during inference.
 * **Voice Aliases & Shortcuts**: Maps short names (`george`, `heart`, `alloy`, `echo`, etc.) to full voice IDs (`bm_george`, `af_heart`, etc.). Dynamically derives shortcuts from all installed `[ab][fm]_[a-z]+.pt` voice packs.
 * **Text Chunking**: `text_chunks()` splits text preferentially on sentence punctuation (`[.!?]`), sub-splitting words only if individual sentences exceed 240 characters.
@@ -164,3 +174,21 @@ The server transparently intercepts and unwraps this format prior to request val
 * **Steady State RTF**: ~0.22 (27.5 s audio generated in ~6.1 s).
 * **PCM Stream First Audio**: Delivered within ~0.48 s.
 * **Concurrent Generation**: GPU NPC dialogue generates in 1.85 s while CPU Kokoro narration streams concurrently.
+
+### Optional GPU Kokoro (RTX 5060 Ti, FP32; 2026-10-13)
+
+Measured using `benchmark_narrator.py`, four CPU threads, 4096-token Qwen cache, three warmed runs. Narration is the same 27.5-second paragraph in both modes. These timings exclude HTTP overhead; PCM latency measures the first synthesized chunk.
+
+| Workload | CPU Kokoro | GPU Kokoro |
+|---|---:|---:|
+| Full paragraph generation | 5.22 s | 0.319 s |
+| First PCM chunk | 0.412 s | 0.037 s |
+| Combined streamed paragraph + cloned dialogue | ~5.5 s | 1.66 s |
+| Base + Kokoro peak reserved VRAM | 3.12 GiB | 3.71 GiB |
+| VoiceDesign + Kokoro peak reserved VRAM | 4.73 GiB | 5.38 GiB |
+
+GPU Kokoro is approximately 16 times faster for this paragraph. Its incremental warmed GPU footprint is about 0.54 GiB resident and 0.66 GiB during narration with Base resident. Allocated peaks are 3.32 GiB with Base and 5.07 GiB during mixed VoiceDesign/narration; reserved memory is the more conservative planning figure. CUDA context, desktop applications, longer utterances, slower speech speeds, and other voices can increase the actual budget. The benchmark hardware has 16 GB VRAM; these figures do not prove every workload fits on a physical 6 GB card.
+
+A reduced-budget run with `--max-seq-len 1024 --vram-limit-gib 5` passed both model swaps while streaming, plus a near-240-character unpunctuated chunk (14.675 seconds of audio) with VoiceDesign resident. Peak reserved memory across all workloads, including warmup, was **4.96 GiB**. The adaptive plan kept VoiceDesign's text embedding on GPU and moved its speech decoder to CPU FP32. Kokoro's warmed paragraph median remained **0.329 s**; combined narration/cloned-dialogue median was **1.27 s**. This caps only PyTorch allocations on a 16 GB RTX 5060 Ti and leaves nominal headroom within a 6 GiB budget; it does not emulate the throughput of a physical 6 GB card.
+
+Raw local results: `out/bench/kokoro_cpu.json`, `out/bench/kokoro_gpu.json`, and `out/bench/kokoro_gpu_5gib.json`.

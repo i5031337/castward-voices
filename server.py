@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from npc_tts import CLONE_MODEL_ID, LOCAL_CLONE_MODEL, SpeechEngine
 from narrator_tts import LOCAL_MODEL as LOCAL_KOKORO_MODEL, MODEL_ID as KOKORO_MODEL_ID
+from narrator_tts import MODEL_LOAD_LOCK
 from sillynpc_bridge import decode_sillynpc_voice
 from starlette.background import BackgroundTask
 
@@ -112,7 +113,7 @@ def encode_audio(wav: np.ndarray, sample_rate: int, fmt: str, speed: float) -> b
 def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, loader=None,
                clone_model=str(LOCAL_CLONE_MODEL), voices_dir="voices", selector=None,
                kokoro_enabled=True, kokoro_loader=None, kokoro_model_dir=LOCAL_KOKORO_MODEL,
-               kokoro_device="cpu", clone_device=None):
+               kokoro_device="cpu", clone_device=None, keep_models_loaded=False):
     def prepare_worker(engine, npc_id):
         try:
             engine.prepare(npc_id)
@@ -142,19 +143,26 @@ def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, l
         with ThreadPoolExecutor(max_workers=1, thread_name_prefix="tts") as executor, \
                 ThreadPoolExecutor(max_workers=1, thread_name_prefix="narrator") as narrator_executor:
             app.state.executor = executor
-            app.state.narrator_executor = narrator_executor
+            # CUDA graph capture uses global error checking: another thread's
+            # Kokoro kernels/allocations can invalidate capture during a swap.
+            # Keep all CUDA work on the Qwen worker, including streaming chunks.
+            shared_cuda_worker = (kokoro_enabled and kokoro_device.startswith("cuda")
+                                  and any(target.startswith("cuda")
+                                          for target in (device, clone_device or device)))
+            app.state.narrator_executor = executor if shared_cuda_worker else narrator_executor
+            app.state.shared_cuda_worker = shared_cuda_worker
             app.state.narrator = None
             app.state.preparations = {}
             load_model = loader
             if load_model is None:
                 import fast_tts
                 load_model = fast_tts.load
-            app.state.engine = await asyncio.get_running_loop().run_in_executor(
-                executor, partial(SpeechEngine, loader=load_model, design_model=model, device=device,
-                                  clone_device=clone_device,
-                                  clone_model=clone_model, max_seq_len=max_seq_len, voices_dir=voices_dir,
-                                  selector=selector))
-            log.info("Loaded speech model: %s", app.state.engine.plan)
+            original_loader = load_model
+
+            def guarded_loader(**kwargs):
+                with MODEL_LOAD_LOCK:
+                    return original_loader(**kwargs)
+
             if kokoro_enabled:
                 if kokoro_loader is None:
                     from narrator_tts import NarratorEngine
@@ -162,9 +170,18 @@ def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, l
                 else:
                     load_narrator = kokoro_loader
                 app.state.narrator = await asyncio.get_running_loop().run_in_executor(
-                    narrator_executor, partial(load_narrator, model_dir=kokoro_model_dir,
-                                                device=kokoro_device))
+                    app.state.narrator_executor, partial(load_narrator, model_dir=kokoro_model_dir,
+                                                        device=kokoro_device))
                 log.info("Loaded Kokoro narrator on %s", kokoro_device)
+            # Resident Kokoro weights must be present when Qwen plans VRAM use.
+            app.state.engine = await asyncio.get_running_loop().run_in_executor(
+                executor, partial(SpeechEngine, loader=guarded_loader, design_model=model, device=device,
+                                  clone_device=clone_device,
+                                  clone_model=clone_model, max_seq_len=max_seq_len, voices_dir=voices_dir,
+                                  selector=selector, keep_models_loaded=keep_models_loaded))
+            log.info("Loaded speech model: %s", app.state.engine.plan)
+            if shared_cuda_worker:
+                log.info("CUDA Kokoro and Qwen share a serial worker; use CPU Kokoro for parallel generation")
             # Resume durable records left preparing by a previous process.
             pending = await asyncio.get_running_loop().run_in_executor(
                 executor, lambda: list(app.state.engine.pending_ids()))
@@ -200,7 +217,10 @@ def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, l
 
     @app.get("/health")
     async def health():
-        return {"status": "ok", "device": device}
+        return {"status": "ok", "device": device,
+                "kokoro_device": kokoro_device if kokoro_enabled else None,
+                "keep_models_loaded": keep_models_loaded,
+                "shared_cuda_worker": app.state.shared_cuda_worker}
 
     @app.get("/v1/models", dependencies=[Depends(authenticate)])
     async def models():
@@ -345,9 +365,12 @@ def main():
     parser.add_argument("--clone-device", default=None, help="Device for 0.6B Base; defaults to --device")
     parser.add_argument("--voices-dir", default="voices", help="Persistent NPC voice directory")
     parser.add_argument("--design-only", action="store_true", help="Disable NPC cloning and use only VoiceDesign")
+    parser.add_argument("--keep-models-loaded", action="store_true",
+                        help="Preload and retain both Qwen models and CUDA graphs; uses more VRAM, avoids swaps")
     parser.add_argument("--no-kokoro", action="store_true", help="Disable the Kokoro narrator backend")
     parser.add_argument("--kokoro-model", default=str(LOCAL_KOKORO_MODEL), help="Local Kokoro model and English voices directory")
-    parser.add_argument("--kokoro-device", default="cpu", help="Device for narration, independently of Qwen")
+    parser.add_argument("--kokoro-device", default="cpu",
+                        help="Kokoro device (cpu or cuda:0); CUDA narration queues with CUDA Qwen for graph safety")
     parser.add_argument("--max-seq-len", type=int, default=4096)
     args = parser.parse_args()
     if args.max_seq_len < 128:
@@ -362,6 +385,7 @@ def main():
                            api_key=os.environ.get("TTS_API_KEY"), voices_dir=args.voices_dir,
                            kokoro_enabled=not args.no_kokoro, kokoro_model_dir=args.kokoro_model,
                            kokoro_device=args.kokoro_device,
+                           keep_models_loaded=args.keep_models_loaded,
                            clone_model=None if args.design_only else args.clone_model), host=args.host, port=args.port)
 
 

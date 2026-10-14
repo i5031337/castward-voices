@@ -55,7 +55,7 @@ class NarratorTests(unittest.TestCase):
         self.storage.cleanup()
 
     def request(self, **kwargs):
-        body = {"model": "kokoro", "voice": "narrator", "input": "A long story. Another sentence.",
+        body = {"model": "kokoro", "voice": "george", "input": "A long story. Another sentence.",
                 "response_format": "wav"}
         return self.client.post("/v1/audio/speech", json={**body, **kwargs})
 
@@ -76,7 +76,7 @@ class NarratorTests(unittest.TestCase):
         self.assertEqual(len(self.client.get("/v1/voices").json()["data"]), 2)
 
     def test_invalid_narration_and_streaming_requests(self):
-        for kwargs in ({"voice": "../../evil.pt"}, {"instructions": "A pirate"}, {"npc_id": "guard"},
+        for kwargs in ({"voice": "narrator"}, {"voice": "../../evil.pt"}, {"instructions": "A pirate"}, {"npc_id": "guard"},
                        {"language": "Japanese"}, {"stream": True}, {"input": "x" * 241}):
             self.assertEqual(self.request(**kwargs).status_code, 400)
         self.assertEqual(self.request(model="qwen3-tts", stream=True).status_code, 400)
@@ -121,7 +121,7 @@ class NarratorTests(unittest.TestCase):
             app = create_app(device="cpu", clone_model=None, loader=lambda **kwargs: self.qwen,
                              voices_dir=self.storage.name, kokoro_loader=lambda **kwargs: self.narrator)
             async with app.router.lifespan_context(app):
-                body = json.dumps({"model": "kokoro", "input": "First. Second.", "voice": "narrator",
+                body = json.dumps({"model": "kokoro", "input": "First. Second.", "voice": "george",
                                    "stream": True, "response_format": "pcm"}).encode()
                 async def receive():
                     return {"type": "http.request", "body": body, "more_body": False}

@@ -1,4 +1,4 @@
-"""Persistent NPC references and a runtime that keeps one TTS model loaded."""
+"""Persistent NPC references with optional residency for both Qwen models."""
 import gc
 import hashlib
 import json
@@ -23,7 +23,7 @@ class SpeechEngine:
     """Called only on the server's dedicated generation thread."""
 
     def __init__(self, *, loader, device, design_model, clone_model, max_seq_len, voices_dir,
-                 selector=None, clone_device=None):
+                 selector=None, clone_device=None, keep_models_loaded=False):
         self.loader = loader
         self.device = device
         self.clone_device = clone_device or device
@@ -34,20 +34,37 @@ class SpeechEngine:
         self.voices_dir = Path(voices_dir)
         self.tts = None
         self.kind = None
+        self.keep_models_loaded = keep_models_loaded
+        self.loaded_models = {}
         self.prompts = OrderedDict()
         self.selector = selector or ReferenceSelector()
         self.get("clone" if clone_model else "design")
+        if keep_models_loaded and clone_model:
+            # Capture both models' graphs before accepting requests, then keep
+            # Base selected for normal NPC dialogue. Loading the second model
+            # accounts for the first model's live allocations in its VRAM plan.
+            self.get("design")
+            self.get("clone")
 
     @property
     def plan(self):
         return self.tts.plan
 
     def get(self, kind):
+        if kind not in {"clone", "design"}:
+            raise ValueError("Unknown Qwen model kind")
         if kind == self.kind:
             return self.tts
         if kind == "clone" and not self.clone_model:
             raise ValueError("NPC cloning is disabled on this server")
-        # Release CUDA graphs and their model weights before loading another model.
+        target_device = self.clone_device if kind == "clone" else self.device
+        if kind in self.loaded_models:
+            self.tts = self.loaded_models[kind]
+            self.active_device = target_device
+            self.kind = kind
+            return self.tts
+        # Default mode releases graphs/weights. Resident mode keeps the previous
+        # model alive in loaded_models while constructing the other pipeline.
         self.tts = None
         self.kind = None
         gc.collect()
@@ -56,8 +73,9 @@ class SpeechEngine:
             torch.cuda.set_device(self.device)
             torch.cuda.empty_cache()
         model = self.clone_model if kind == "clone" else self.design_model
-        target_device = self.clone_device if kind == "clone" else self.device
         self.tts = self.loader(model_id=model, device=target_device, max_seq_len=self.max_seq_len)
+        if self.keep_models_loaded:
+            self.loaded_models[kind] = self.tts
         self.active_device = target_device
         self.kind = kind
         log.info("Loaded %s model: %s", kind, self.tts.plan)

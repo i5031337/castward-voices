@@ -149,6 +149,11 @@ def _plan(base: Qwen3TTSModel, device: str, dtype: torch.dtype, max_seq_len: int
 
     torch.cuda.empty_cache()
     free = torch.cuda.mem_get_info(device)[0] + WDDM_SLACK
+    # Respect an allocator cap (also useful for testing smaller VRAM budgets).
+    # empty_cache above releases unused blocks; live allocations include Kokoro.
+    cap = (torch.cuda.get_per_process_memory_fraction(device)
+           * torch.cuda.get_device_properties(device).total_memory)
+    free = min(free, cap - torch.cuda.memory_reserved(device))
     spare = free - core - kv_cache - RUNTIME_RESERVE
     if spare < (0 if offload_embedding is not False else emb):
         warnings.warn(f"Qwen3-TTS needs ~{(core + kv_cache + RUNTIME_RESERVE) / GiB:.1f} GiB of free VRAM on {device}, "
