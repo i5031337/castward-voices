@@ -92,13 +92,13 @@ OMP_NUM_THREADS=4 .venv/bin/python server.py --device cuda:0 --port 8001
 
 * **GPU selection**: Default is `--device cuda:0`. Use `--device cpu` for standard CPU generation.
 * **GPU Kokoro**: Add `--kokoro-device cuda:0` to keep the narrator on GPU in FP32. CPU remains the default. Kokoro loads before Qwen so its resident weights count toward Qwen's VRAM plan.
-* **Keep all models loaded**: Add `--keep-models-loaded` to preload and retain both Qwen models and their CUDA graphs, avoiding reload/capture delays when switching between voice creation and dialogue. Kokoro stays on its configured device. With `--kokoro-device cuda:0` and the default 4096-token cache, all three on an RTX 5060 Ti peaked at **7.75 GiB allocated / 8.28 GiB reserved** in the benchmark. Budget roughly **9 GiB with headroom**; a 12 GB GPU is a comfortable target. Other applications and longer/slower audio can require more memory. The adaptive CPU offloading plan still applies; the default remains one resident Qwen model with swapping.
+* **Keep all models loaded**: Add `--keep-models-loaded` to preload and retain both Qwen models and their CUDA graphs, avoiding reload/capture delays when switching between voice creation and dialogue. Kokoro stays on its configured device. With `--kokoro-device cuda:0` and the default 4096-token cache, all three use roughly **8–9 GiB reserved VRAM** in the benchmarks; the automatic parallel comparison peaked at **8.46 GiB**. Budget roughly **9 GiB with headroom**; a 12 GB GPU is a comfortable target. Other applications and longer/slower audio can require more memory. The adaptive CPU offloading plan still applies; the default remains one resident Qwen model with swapping.
 * **Low-VRAM GPUs (e.g. 4 GB cards)**: Add `--max-seq-len 1024` or `--clone-device cpu`.
-* **6 GB starting configuration**: Use `--kokoro-device cuda:0 --max-seq-len 1024`. The planner can move Qwen's speech decoder to CPU when needed. A 5 GiB allocator-cap benchmark on an RTX 5060 Ti passed narration, dialogue, model swaps, and a near-240-character Kokoro chunk, peaking at 4.96 GiB reserved. This leaves room for driver/display memory within a 6 GiB budget; slower speech or other workloads may need more memory. See [benchmark results](AGENTS.md#optional-gpu-kokoro-rtx-5060-ti-fp32-2026-10-13).
+* **6 GB starting configuration**: Use `--kokoro-device cuda:0 --max-seq-len 1024`. The planner can move Qwen's speech decoder and text embedding to CPU when needed. A 5 GiB allocator-cap benchmark on an RTX 5060 Ti passed automatic parallel narration, dialogue, model swaps, and a near-240-character Kokoro chunk, peaking at **4.42 GiB reserved**. This leaves room for driver/display memory within a 6 GiB budget; slower speech or other workloads may need more memory. See [benchmark results](AGENTS.md#automatic-parallel-narration).
 * **Narration only**: Pass `--design-only` to disable NPC cloning while keeping Kokoro available.
 * **API Security**: Set `export TTS_API_KEY="your-secret-key"` to require Bearer token authentication.
 
-The server accepts simultaneous requests. With CPU Kokoro, one narration inference and one Qwen inference can run in parallel. Each backend queues additional work on a single worker; background NPC preparation shares Qwen's queue. With CUDA Kokoro and CUDA Qwen, both backends share a serial worker to keep Kokoro kernels and allocations out of Qwen CUDA graph capture during model swaps. PCM streams yield between chunks, allowing queued dialogue to run before the next chunk. A full non-streaming narration request occupies the worker until generation and encoding finish. `/health` reports `kokoro_device` and `shared_cuda_worker`.
+Narration automatically runs alongside Qwen on its own worker, whether Kokoro uses CPU or GPU. GPU Kokoro owns a separate CUDA stream; both CPU and GPU Kokoro use a private random generator so narration does not change seeded Qwen output. Each backend still queues its own additional requests, and background NPC preparation shares Qwen's queue. Narration pauses during Qwen model loading and graph capture, then resumes alongside inference. This works with swapping or `--keep-models-loaded` and requires no parallel-mode flag. The memory planner automatically reserves 1 GiB of workspace for GPU narration on the same device, in addition to its resident weights. `/health` reports `kokoro_device`, `keep_models_loaded`, and `shared_cuda_worker=false`.
 
 For ample-VRAM GPUs, keep all three models resident on GPU:
 
@@ -106,7 +106,7 @@ For ample-VRAM GPUs, keep all three models resident on GPU:
 OMP_NUM_THREADS=4 .venv/bin/python server.py --device cuda:0 --kokoro-device cuda:0 --keep-models-loaded
 ```
 
-Resident mode still serializes Qwen inference and shares its worker with CUDA Kokoro; it removes model-switch loading and graph-capture overhead. Startup takes longer because both Qwen models initialize before the server accepts requests. `/health` reports `keep_models_loaded`. With `--design-only`, the flag retains only VoiceDesign because Base is disabled.
+Resident mode removes model-switch loading and graph-capture overhead. Qwen requests remain serial while narration runs alongside them. Startup takes longer because both Qwen models initialize before the server accepts requests. With `--design-only`, the flag retains only VoiceDesign because Base is disabled.
 
 To benchmark the same paragraph, first-chunk latency, simultaneous streamed narration/dialogue, and model swaps on your hardware (requires a ready saved NPC):
 
@@ -118,6 +118,14 @@ OMP_NUM_THREADS=4 .venv/bin/python benchmark_narrator.py --kokoro-device cuda:0 
 ```
 
 Each workload saves its first warmup and three measured runs. Median timings exclude warmup; peak PyTorch allocated and reserved VRAM include it. Timings use the server's workers directly and exclude HTTP overhead; first PCM latency measures synthesized audio readiness. The benchmark also tests a near-240-character narration chunk with VoiceDesign resident. `--max-seq-len 1024` tests a smaller Qwen cache. `--vram-limit-gib 5` caps PyTorch's allocator to leave headroom within a 6 GiB budget; the planner respects this cap. This excludes CUDA context/display memory and does not reproduce a physical 6 GB GPU's speed or memory bandwidth.
+
+A comparison benchmark measures the serial queue against automatic parallel narration with both Qwen models resident:
+
+```bash
+.venv/bin/python benchmark_gpu_overlap.py --output out/bench/gpu_overlap.json
+```
+
+It preloads all three models, keeps Qwen requests serial, alternates serial/overlap measurement order, and tests simultaneous arrivals plus narration arriving 100 ms after dialogue starts. It validates generated audio and records output hashes, latency, throughput, and VRAM. Both modes use Kokoro's automatic RNG isolation. See the [GPU overlap results](AGENTS.md#experimental-gpu-overlap).
 
 ---
 

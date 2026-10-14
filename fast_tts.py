@@ -131,7 +131,8 @@ def _gemv_is_faster(device: str, dtype: torch.dtype) -> bool:
 
 
 def _plan(base: Qwen3TTSModel, device: str, dtype: torch.dtype, max_seq_len: int,
-          gemv: Optional[bool], offload_embedding: Optional[bool], decoder_on_gpu: Optional[bool]) -> Plan:
+          gemv: Optional[bool], offload_embedding: Optional[bool], decoder_on_gpu: Optional[bool],
+          memory_reserve_bytes: int = 0) -> Plan:
     """Fill unset options: the decoder gets VRAM before the text embedding,
     since CPU decoding costs far more time than a CPU embedding lookup."""
     if gemv is None:
@@ -154,9 +155,9 @@ def _plan(base: Qwen3TTSModel, device: str, dtype: torch.dtype, max_seq_len: int
     cap = (torch.cuda.get_per_process_memory_fraction(device)
            * torch.cuda.get_device_properties(device).total_memory)
     free = min(free, cap - torch.cuda.memory_reserved(device))
-    spare = free - core - kv_cache - RUNTIME_RESERVE
+    spare = free - core - kv_cache - RUNTIME_RESERVE - memory_reserve_bytes
     if spare < (0 if offload_embedding is not False else emb):
-        warnings.warn(f"Qwen3-TTS needs ~{(core + kv_cache + RUNTIME_RESERVE) / GiB:.1f} GiB of free VRAM on {device}, "
+        warnings.warn(f"Qwen3-TTS and reserved workspace need ~{(core + kv_cache + RUNTIME_RESERVE + memory_reserve_bytes) / GiB:.1f} GiB of free VRAM on {device}, "
                       f"~{free / GiB:.1f} GiB available; expect out-of-memory errors or (on Windows) slow "
                       "shared-memory spill. Close other GPU apps or lower max_seq_len.", stacklevel=3)
     if decoder_on_gpu is None:
@@ -170,7 +171,8 @@ def _plan(base: Qwen3TTSModel, device: str, dtype: torch.dtype, max_seq_len: int
 
 def load(model_id: Optional[str] = None, device: str = "cuda", max_seq_len: int = 1024, *,
          dtype: Optional[torch.dtype] = None, gemv: Optional[bool] = None,
-         offload_embedding: Optional[bool] = None, decoder_on_gpu: Optional[bool] = None) -> FasterQwen3TTS | Qwen3TTSModel:
+         offload_embedding: Optional[bool] = None, decoder_on_gpu: Optional[bool] = None,
+         memory_reserve_bytes: int = 0) -> FasterQwen3TTS | Qwen3TTSModel:
     """Load the local model if available, or the default Hub model.
 
     On CUDA, pick a plan for the GPU and capture CUDA graphs. On CPU, use
@@ -179,6 +181,7 @@ def load(model_id: Optional[str] = None, device: str = "cuda", max_seq_len: int 
     `max_seq_len` bounds prompt + audio frames (12 frames/s); smaller is faster
     since attention spans the whole static cache. The keyword options override
     auto-detection; the chosen configuration is stored on `tts.plan`.
+    `memory_reserve_bytes` leaves headroom for other inference on the same GPU.
     """
     if model_id is None:
         model_id = str(LOCAL_MODEL) if (LOCAL_MODEL / "model.safetensors").is_file() else MODEL_ID
@@ -195,7 +198,8 @@ def load(model_id: Optional[str] = None, device: str = "cuda", max_seq_len: int 
         dtype = torch.bfloat16 if torch.cuda.get_device_capability(device)[0] >= 8 else torch.float16
 
     base = Qwen3TTSModel.from_pretrained(model_id, dtype=dtype, attn_implementation="sdpa")
-    plan = _plan(base, device, dtype, max_seq_len, gemv, offload_embedding, decoder_on_gpu)
+    plan = _plan(base, device, dtype, max_seq_len, gemv, offload_embedding, decoder_on_gpu,
+                 memory_reserve_bytes)
 
     tokenizer = base.model.speech_tokenizer
     tokenizer.model.to(device if plan.decoder_on_gpu else "cpu", plan.decoder_dtype)

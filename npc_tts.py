@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
+from narrator_tts import MODEL_LOAD_LOCK
 from reference_audio import MAX_REFERENCE_SECONDS, MIN_REFERENCE_SECONDS, ReferenceSelector
 
 CLONE_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
@@ -65,17 +66,18 @@ class SpeechEngine:
             return self.tts
         # Default mode releases graphs/weights. Resident mode keeps the previous
         # model alive in loaded_models while constructing the other pipeline.
-        self.tts = None
-        self.kind = None
-        gc.collect()
-        import torch
-        if self.device.startswith("cuda"):
-            torch.cuda.set_device(self.device)
-            torch.cuda.empty_cache()
-        model = self.clone_model if kind == "clone" else self.design_model
-        self.tts = self.loader(model_id=model, device=target_device, max_seq_len=self.max_seq_len)
-        if self.keep_models_loaded:
-            self.loaded_models[kind] = self.tts
+        with MODEL_LOAD_LOCK:
+            self.tts = None
+            self.kind = None
+            gc.collect()
+            import torch
+            if self.device.startswith("cuda"):
+                torch.cuda.set_device(self.device)
+                torch.cuda.empty_cache()
+            model = self.clone_model if kind == "clone" else self.design_model
+            self.tts = self.loader(model_id=model, device=target_device, max_seq_len=self.max_seq_len)
+            if self.keep_models_loaded:
+                self.loaded_models[kind] = self.tts
         self.active_device = target_device
         self.kind = kind
         log.info("Loaded %s model: %s", kind, self.tts.plan)

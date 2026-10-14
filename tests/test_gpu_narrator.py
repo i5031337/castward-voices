@@ -2,17 +2,39 @@ import asyncio
 import tempfile
 import threading
 import unittest
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import torch
 
-from narrator_tts import NarratorEngine
+from narrator_tts import MODEL_LOAD_LOCK, NarratorEngine
 from server import create_app
 from test_server import FakeTTS
 
 
 class GpuNarratorTests(unittest.TestCase):
+    def test_gpu_work_drains_under_load_lock_even_when_inference_fails(self):
+        narrator = NarratorEngine.__new__(NarratorEngine)
+        narrator.validate = lambda body: "bm_george"
+        narrator.packs = {"bm_george": None}
+        drained = []
+        def synchronize():
+            self.assertTrue(MODEL_LOAD_LOCK._is_owned())
+            drained.append(True)
+        narrator.stream = SimpleNamespace(synchronize=synchronize)
+        def pipeline(*args, **kwargs):
+            yield SimpleNamespace(audio=torch.ones(2400) * 0.1)
+            raise RuntimeError("Inference failed")
+        narrator.pipelines = {"b": pipeline}
+        with patch("torch.cuda.stream", side_effect=lambda stream: nullcontext()):
+            iterator = narrator.chunks(SimpleNamespace(input="Hello.", speed=1))
+            self.assertEqual(len(next(iterator)), 2400)
+            self.assertEqual(len(drained), 1)
+            with self.assertRaisesRegex(RuntimeError, "Inference failed"):
+                next(iterator)
+            self.assertEqual(len(drained), 2)
+
     def test_model_swap_cannot_change_dtype_during_cpu_narration(self):
         async def exercise():
             loading, release, inference = threading.Event(), threading.Event(), threading.Event()
@@ -58,7 +80,7 @@ class GpuNarratorTests(unittest.TestCase):
 
     @patch("torch.cuda.set_device")
     @patch("torch.cuda.empty_cache")
-    def test_cuda_narrator_loads_before_qwen_on_same_worker(self, *_):
+    def test_cuda_narrator_loads_first_and_runs_alongside_qwen(self, *_):
         async def exercise():
             calls = []
             def narrator_loader(**kwargs):
@@ -73,20 +95,20 @@ class GpuNarratorTests(unittest.TestCase):
                 async with app.router.lifespan_context(app):
                     self.assertEqual([row[:2] for row in calls],
                                      [("kokoro", "cuda:0"), ("qwen", "cuda:0")])
-                    self.assertEqual(calls[0][2], calls[1][2])
-                    self.assertIs(app.state.executor, app.state.narrator_executor)
+                    self.assertNotEqual(calls[0][2], calls[1][2])
+                    self.assertIsNot(app.state.executor, app.state.narrator_executor)
                     entered, release = threading.Event(), threading.Event()
-                    def capture():
+                    def dialogue():
                         entered.set()
                         if not release.wait(5):
                             raise RuntimeError("Test timed out")
                     loop = asyncio.get_running_loop()
-                    task = loop.run_in_executor(app.state.executor, capture)
+                    task = loop.run_in_executor(app.state.executor, dialogue)
                     try:
                         self.assertTrue(await asyncio.to_thread(entered.wait, 2))
                         narration = loop.run_in_executor(app.state.narrator_executor, lambda: "audio")
-                        await asyncio.sleep(0.02)
-                        self.assertFalse(narration.done(), "Kokoro ran during graph capture")
+                        self.assertEqual(await asyncio.wait_for(narration, 2), "audio")
+                        self.assertFalse(task.done(), "Narration waited for dialogue")
                     finally:
                         release.set()
                     await task

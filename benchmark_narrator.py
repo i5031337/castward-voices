@@ -101,7 +101,7 @@ async def benchmark(args):
             return {"generation_seconds": elapsed, "audio_seconds": duration, "rtf": elapsed / duration}
 
         async def mixed(body):
-            # Streaming lets queued Qwen run between narration chunks on CUDA.
+            # Submit streamed narration and dialogue on their independent workers.
             narrator_result, qwen_result = await asyncio.gather(narrate(True), qwen(body))
             return {"narrator": narrator_result, "qwen": qwen_result}
 
@@ -144,7 +144,7 @@ async def benchmark(args):
             results["mixed_design"] = await measure("mixed_design", lambda: mixed(design))
             results["long_chunk_with_design_resident"] = await measure(
                 "long_chunk_with_design_resident", lambda: narrate(body=long_narration))
-            # Force graph recapture while Kokoro's first chunk is scheduled.
+            # Exercise the load/capture guard while narration is scheduled.
             results["swap_back"] = await measure("swap_back", lambda: mixed(clone))
         summary = {"device": args.device, "kokoro_device": args.kokoro_device,
                    "gpu": torch.cuda.get_device_name(cuda_device) if gpu else None,

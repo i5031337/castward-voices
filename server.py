@@ -23,7 +23,6 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from npc_tts import CLONE_MODEL_ID, LOCAL_CLONE_MODEL, SpeechEngine
 from narrator_tts import LOCAL_MODEL as LOCAL_KOKORO_MODEL, MODEL_ID as KOKORO_MODEL_ID
-from narrator_tts import MODEL_LOAD_LOCK
 from sillynpc_bridge import decode_sillynpc_voice
 from starlette.background import BackgroundTask
 
@@ -143,26 +142,24 @@ def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, l
         with ThreadPoolExecutor(max_workers=1, thread_name_prefix="tts") as executor, \
                 ThreadPoolExecutor(max_workers=1, thread_name_prefix="narrator") as narrator_executor:
             app.state.executor = executor
-            # CUDA graph capture uses global error checking: another thread's
-            # Kokoro kernels/allocations can invalidate capture during a swap.
-            # Keep all CUDA work on the Qwen worker, including streaming chunks.
-            shared_cuda_worker = (kokoro_enabled and kokoro_device.startswith("cuda")
-                                  and any(target.startswith("cuda")
-                                          for target in (device, clone_device or device)))
-            app.state.narrator_executor = executor if shared_cuda_worker else narrator_executor
-            app.state.shared_cuda_worker = shared_cuda_worker
+            # Narration always owns its worker; model transitions alone acquire
+            # MODEL_LOAD_LOCK to exclude Kokoro inference during graph capture.
+            app.state.narrator_executor = narrator_executor
+            app.state.shared_cuda_worker = False
             app.state.narrator = None
             app.state.preparations = {}
             load_model = loader
             if load_model is None:
                 import fast_tts
-                load_model = fast_tts.load
-            original_loader = load_model
-
-            def guarded_loader(**kwargs):
-                with MODEL_LOAD_LOCK:
-                    return original_loader(**kwargs)
-
+                def load_model(**kwargs):
+                    import torch
+                    target = torch.device(kwargs["device"])
+                    if target.type == "cuda" and target.index is None:
+                        target = torch.device("cuda", torch.cuda.current_device())
+                    narrator = app.state.narrator
+                    reserve = (narrator.workspace_bytes if narrator is not None
+                               and narrator.device == target else 0)
+                    return fast_tts.load(**kwargs, memory_reserve_bytes=reserve)
             if kokoro_enabled:
                 if kokoro_loader is None:
                     from narrator_tts import NarratorEngine
@@ -175,13 +172,12 @@ def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, l
                 log.info("Loaded Kokoro narrator on %s", kokoro_device)
             # Resident Kokoro weights must be present when Qwen plans VRAM use.
             app.state.engine = await asyncio.get_running_loop().run_in_executor(
-                executor, partial(SpeechEngine, loader=guarded_loader, design_model=model, device=device,
+                executor, partial(SpeechEngine, loader=load_model, design_model=model, device=device,
                                   clone_device=clone_device,
                                   clone_model=clone_model, max_seq_len=max_seq_len, voices_dir=voices_dir,
                                   selector=selector, keep_models_loaded=keep_models_loaded))
             log.info("Loaded speech model: %s", app.state.engine.plan)
-            if shared_cuda_worker:
-                log.info("CUDA Kokoro and Qwen share a serial worker; use CPU Kokoro for parallel generation")
+            log.info("Narration runs on an independent worker; model loading pauses narration safely")
             # Resume durable records left preparing by a previous process.
             pending = await asyncio.get_running_loop().run_in_executor(
                 executor, lambda: list(app.state.engine.pending_ids()))
@@ -370,7 +366,7 @@ def main():
     parser.add_argument("--no-kokoro", action="store_true", help="Disable the Kokoro narrator backend")
     parser.add_argument("--kokoro-model", default=str(LOCAL_KOKORO_MODEL), help="Local Kokoro model and English voices directory")
     parser.add_argument("--kokoro-device", default="cpu",
-                        help="Kokoro device (cpu or cuda:0); CUDA narration queues with CUDA Qwen for graph safety")
+                        help="Kokoro device (cpu or cuda:0); narration runs alongside Qwen automatically")
     parser.add_argument("--max-seq-len", type=int, default=4096)
     args = parser.parse_args()
     if args.max_seq_len < 128:

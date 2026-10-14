@@ -1,6 +1,7 @@
 """Kokoro narration with local preset voices and bounded English text chunks."""
 import re
 import threading
+from contextlib import nullcontext
 from pathlib import Path
 
 import numpy as np
@@ -87,6 +88,15 @@ class NarratorEngine:
                                         map_location="cpu", weights_only=True)
                       for voice in self.voices}
         self.aliases = {**VOICE_ALIASES, **{v.split("_", 1)[1]: v for v in self.voices if "_" in v}}
+        self.device = self.model.device
+        self.generator = torch.Generator(device=self.device).manual_seed(0)
+        self.stream = torch.cuda.Stream(device=self.device) if self.device.type == "cuda" else None
+        if self.stream is not None:
+            self.stream.wait_stream(torch.cuda.current_stream(self.device))
+            self.stream.synchronize()
+        # Reserve temporary Kokoro tensors in addition to its resident weights.
+        # Qwen's own decoder workspace is budgeted separately for overlap.
+        self.workspace_bytes = 2**30 if self.stream is not None else 0
 
     def validate(self, body):
         if body.npc_id:
@@ -108,6 +118,7 @@ class NarratorEngine:
 
     def chunks(self, body):
         import torch
+        from narrator_rng import NarratorRandomMode
         voice = self.validate(body)
         pipeline = self.pipelines[voice[0]]
         for text in text_chunks(body.input):
@@ -118,10 +129,20 @@ class NarratorEngine:
                 # dtype while loading Qwen. Kokoro creates FP32 intermediates
                 # using that default, so model loading cannot overlap this step.
                 with MODEL_LOAD_LOCK, torch.inference_mode():
-                    result = next(results, None)
+                    stream = getattr(self, "stream", None)
+                    generator = getattr(self, "generator", None)
+                    try:
+                        with (torch.cuda.stream(stream) if stream is not None else nullcontext()), \
+                                (NarratorRandomMode(generator) if generator is not None else nullcontext()):
+                            result = next(results, None)
+                            wav = None if result is None else result.audio.detach().cpu().numpy().astype(np.float32)
+                    finally:
+                        # Graph capture can start as soon as this lock releases.
+                        # Drain even failed/cancelled inference on Kokoro's stream.
+                        if stream is not None:
+                            stream.synchronize()
                 if result is None:
                     break
-                wav = result.audio.detach().cpu().numpy().astype(np.float32)
                 if wav.ndim != 1 or wav.size == 0 or not np.isfinite(wav).all():
                     raise RuntimeError("Kokoro produced empty or invalid audio")
                 yield wav
