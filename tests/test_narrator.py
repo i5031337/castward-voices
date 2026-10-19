@@ -41,6 +41,10 @@ class FakeNarrator:
     def generate(self, body):
         return np.concatenate(list(self.chunks(body))), 24000
 
+    def generate_context(self, body):
+        wav, rate = self.generate(body)
+        return wav, rate, getattr(self, "context_status", "applied")
+
 
 class NarratorTests(unittest.TestCase):
     def setUp(self):
@@ -87,6 +91,17 @@ class NarratorTests(unittest.TestCase):
         self.assertGreater(len(text), 4096)
         self.assertEqual(self.request(input=text).status_code, 200)
         self.assertEqual(self.request(input=text, model="qwen3-tts").status_code, 400)
+
+    def test_context_contract_reports_application_and_fallback(self):
+        response = self.request(input="he said.", context_before='"Hello," ', context_after=' "Goodbye."')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["x-narration-context"], "applied")
+        self.narrator.context_status = "fallback"
+        response = self.request(input="he said.", context_before='"Hello," ')
+        self.assertEqual(response.headers["x-narration-context"], "fallback")
+        for kwargs in ({"context_before": "x" * 230}, {"context_before": "Hello ", "stream": True,
+                        "response_format": "pcm"}, {"context_before": "Hello ", "model": "qwen3-tts"}):
+            self.assertEqual(self.request(**kwargs).status_code, 400)
 
     def test_narration_does_not_wait_for_qwen_worker(self):
         entered, release = threading.Event(), threading.Event()

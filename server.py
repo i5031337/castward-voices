@@ -61,6 +61,8 @@ class SpeechRequest(BaseModel):
     speed: float = Field(default=1.0, ge=0.25, le=4.0)
     stream_format: Literal["audio"] = "audio"
     stream: bool = False  # Local extension: Kokoro PCM chunks during synthesis.
+    context_before: str = Field(default="", max_length=240)
+    context_after: str = Field(default="", max_length=240)
     # Qwen-specific extensions; pass through extra_body with the OpenAI SDK.
     language: str = "English"
     seed: int | None = Field(default=None, ge=0, le=2**63 - 1)
@@ -258,10 +260,14 @@ def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, l
 
     def narrate(body):
         started = time.perf_counter()
-        wav, sr = app.state.narrator.generate(body)
+        status = None
+        if body.context_before or body.context_after:
+            wav, sr, status = app.state.narrator.generate_context(body)
+        else:
+            wav, sr = app.state.narrator.generate(body)
         log.info("Kokoro generated %.2fs audio in %.2fs", len(wav) / sr, time.perf_counter() - started)
         # Kokoro applies speed while synthesizing; do not apply it a second time.
-        return encode_audio(wav, sr, body.response_format, 1.0)
+        return encode_audio(wav, sr, body.response_format, 1.0), status
 
     def next_pcm(iterator):
         wav = next(iterator, None)
@@ -273,8 +279,9 @@ def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, l
         app.state.narrator.validate(body)
         loop, executor = asyncio.get_running_loop(), app.state.narrator_executor
         if not body.stream:
-            audio = await loop.run_in_executor(executor, narrate, body)
-            return Response(audio, media_type=MEDIA_TYPES[body.response_format])
+            audio, status = await loop.run_in_executor(executor, narrate, body)
+            return Response(audio, media_type=MEDIA_TYPES[body.response_format],
+                            headers={"X-Narration-Context": status} if status else None)
         if body.response_format != "pcm":
             raise ValueError("Kokoro streaming requires response_format=pcm (24 kHz mono, signed 16-bit little-endian)")
         iterator = app.state.narrator.chunks(body)
@@ -322,6 +329,8 @@ def create_app(*, device="cuda:0", model=None, max_seq_len=4096, api_key=None, l
         is_kokoro = body.model in KOKORO_NAMES
         if body.model not in MODEL_NAMES and not is_kokoro:
             raise HTTPException(400, "Unknown model. Use qwen3-tts or kokoro.")
+        if (body.context_before or body.context_after) and not is_kokoro:
+            raise HTTPException(400, "Narration context is supported for Kokoro only")
         if not is_kokoro and len(body.input) > 4096:
             raise HTTPException(400, "Qwen input accepts up to 4096 characters")
         if body.stream and not is_kokoro:

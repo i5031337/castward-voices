@@ -1,5 +1,7 @@
 """Kokoro narration with local preset voices and bounded English text chunks."""
 import re
+import logging
+import math
 import threading
 from contextlib import nullcontext
 from pathlib import Path
@@ -10,6 +12,53 @@ MODEL_ID = "hexgrad/Kokoro-82M"
 LOCAL_MODEL = Path(__file__).resolve().parent / "models" / "kokoro"
 MODEL_LOAD_LOCK = threading.RLock()
 SAMPLE_RATE = 24000
+log = logging.getLogger(__name__)
+
+
+def contextual_cut(wav, tokens, before, text, after):
+    """Return only target words when native token coverage and boundaries are valid."""
+    normalized = lambda value: "".join(c.casefold() for c in value if c.isalnum())
+    words = [token for token in tokens or [] if normalized(token.text)]
+    if normalized("".join(word.text for word in words)) != normalized(before + text + after):
+        raise ValueError("Native token coverage differs from the requested text")
+    left, right = len(normalized(before)), len(normalized(before + text))
+    if left == right:
+        raise ValueError("Target has no speakable words")
+    selected, preceding, following = [], [], []
+    offset, previous_end = 0, 0.0
+    for word in words:
+        start, end = word.start_ts, word.end_ts
+        if (start is None or end is None or not math.isfinite(start) or not math.isfinite(end)
+                or start < previous_end - 0.001 or end <= start or end > len(wav) / SAMPLE_RATE + 0.03):
+            raise ValueError("Native token timings are missing or invalid")
+        previous_end = end
+        next_offset = offset + len(normalized(word.text))
+        if offset < left < next_offset or offset < right < next_offset:
+            raise ValueError("Target boundary crosses a token")
+        if next_offset <= left:
+            preceding.append(word)
+        elif offset >= right:
+            following.append(word)
+        else:
+            selected.append(word)
+        offset = next_offset
+    if not selected:
+        raise ValueError("No target tokens")
+    start = max(0, selected[0].start_ts - 0.04)
+    end = min(len(wav) / SAMPLE_RATE, selected[-1].end_ts + 0.08)
+    if preceding:
+        start = max(start, (preceding[-1].end_ts + selected[0].start_ts) / 2)
+    if following:
+        end = min(end, (selected[-1].end_ts + following[0].start_ts) / 2)
+    clip = wav[round(start * SAMPLE_RATE):round(end * SAMPLE_RATE)].copy()
+    if not len(clip) or not np.isfinite(clip).all() or np.max(np.abs(clip)) < 1e-5:
+        raise ValueError("Context cut is empty, invalid, or silent")
+    # Tiny edge fades prevent a discontinuity at cuts without changing word timing.
+    fade = min(120, len(clip) // 2)
+    if fade:
+        clip[:fade] *= np.linspace(0, 1, fade)
+        clip[-fade:] *= np.linspace(1, 0, fade)
+    return clip
 VOICE_ALIASES = {
     # American English (Female)
     "alloy": "af_alloy",
@@ -114,38 +163,58 @@ class NarratorEngine:
         # Check pathological words before starting any streaming response.
         if any(len(word) > 240 for word in body.input.split()):
             raise ValueError("Narration contains a word longer than 240 characters")
+        before, after = getattr(body, "context_before", ""), getattr(body, "context_after", "")
+        if before or after:
+            if body.stream:
+                raise ValueError("Contextual narration requires a non-streaming request")
+            if len(before + body.input + after) > 240:
+                raise ValueError("Narration context plus input accepts up to 240 characters")
         return voice
 
-    def chunks(self, body):
+    def _infer(self, results):
         import torch
         from narrator_rng import NarratorRandomMode
+        results = iter(results)
+        while True:
+            # Default-dtype changes and CUDA graph capture exclude narrator work.
+            with MODEL_LOAD_LOCK, torch.inference_mode():
+                stream = getattr(self, "stream", None)
+                generator = getattr(self, "generator", None)
+                try:
+                    with (torch.cuda.stream(stream) if stream is not None else nullcontext()), \
+                            (NarratorRandomMode(generator) if generator is not None else nullcontext()):
+                        result = next(results, None)
+                        wav = None if result is None else result.audio.detach().cpu().numpy().astype(np.float32)
+                finally:
+                    if stream is not None:
+                        stream.synchronize()
+            if result is None:
+                break
+            if wav.ndim != 1 or wav.size == 0 or not np.isfinite(wav).all():
+                raise RuntimeError("Kokoro produced empty or invalid audio")
+            yield result, wav
+
+    def chunks(self, body):
         voice = self.validate(body)
         pipeline = self.pipelines[voice[0]]
         for text in text_chunks(body.input):
-            # Do not hold a thread-local inference context across a generator yield.
-            results = iter(pipeline(text, voice=self.packs[voice], speed=body.speed))
-            while True:
-                # Transformers temporarily changes the process-wide default
-                # dtype while loading Qwen. Kokoro creates FP32 intermediates
-                # using that default, so model loading cannot overlap this step.
-                with MODEL_LOAD_LOCK, torch.inference_mode():
-                    stream = getattr(self, "stream", None)
-                    generator = getattr(self, "generator", None)
-                    try:
-                        with (torch.cuda.stream(stream) if stream is not None else nullcontext()), \
-                                (NarratorRandomMode(generator) if generator is not None else nullcontext()):
-                            result = next(results, None)
-                            wav = None if result is None else result.audio.detach().cpu().numpy().astype(np.float32)
-                    finally:
-                        # Graph capture can start as soon as this lock releases.
-                        # Drain even failed/cancelled inference on Kokoro's stream.
-                        if stream is not None:
-                            stream.synchronize()
-                if result is None:
-                    break
-                if wav.ndim != 1 or wav.size == 0 or not np.isfinite(wav).all():
-                    raise RuntimeError("Kokoro produced empty or invalid audio")
+            for _, wav in self._infer(pipeline(text, voice=self.packs[voice], speed=body.speed)):
                 yield wav
+
+    def generate_context(self, body):
+        voice = self.validate(body)
+        full_text = body.context_before + body.input + body.context_after
+        results = list(self._infer(self.pipelines[voice[0]](
+            full_text, voice=self.packs[voice], speed=body.speed, split_pattern=None)))
+        try:
+            if len(results) != 1:
+                raise ValueError("Context did not fit in one native inference chunk")
+            result, wav = results[0]
+            return contextual_cut(wav, getattr(result, "tokens", None), body.context_before, body.input, body.context_after), SAMPLE_RATE, "applied"
+        except ValueError as error:
+            log.warning("Contextual narration fell back to standalone: %s", error)
+            wav, rate = self.generate(body)
+            return wav, rate, "fallback"
 
     def generate(self, body):
         chunks = list(self.chunks(body))

@@ -241,6 +241,13 @@ When used with the **SillyNPC** extension, voice descriptions, NPC IDs, and toke
 | `/v1/voices/{npc_id}` | GET | Check preparation status (`ready`, `preparing`, `failed`) and reference audio length for an NPC. |
 | `/health` | GET | Server status and active device. |
 
+For short Kokoro narration fragments, optional `context_before` and
+`context_after` strings provide sentence context while the response contains
+only `input`. The combined text must fit within 240 characters; streaming is
+unsupported for contextual requests. Native token timings validate the cut;
+unsafe extraction falls back to standalone synthesis. `X-Narration-Context`
+reports `applied` or `fallback`.
+
 ---
 
 ## Technical Details & Architecture
