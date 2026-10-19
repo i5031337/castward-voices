@@ -225,11 +225,11 @@ Generate samples directly from the terminal without starting the server:
 
 ---
 
-### 4. SillyTavern Integration (SillyNPC)
+### 4. SillyTavern Integration (ST-Castward)
 
 Point SillyTavern's **OpenAI Compatible TTS** provider to `http://127.0.0.1:8001/v1`. 
 
-When used with the **SillyNPC** extension, voice descriptions, NPC IDs, and token budgets are bundled transparently into the `voice` parameter (`sillynpc-v1:<payload>`). The server automatically decodes these requests, routes narration to Kokoro, and preserves character voices across conversations.
+When used with the **CASTWARD** extension, voice descriptions, NPC IDs, and token budgets are bundled transparently into the `voice` parameter (`sillynpc-v1:<payload>`). The server automatically decodes these requests, routes narration to Kokoro, and preserves character voices across conversations.
 
 ---
 
