@@ -1,6 +1,6 @@
 # Qwen3-TTS Speech Server
 
-A local, OpenAI-compatible text-to-speech server built around a **3-model hybrid workflow**. It pairs lightweight CPU narration with GPU-accelerated zero-shot voice design and fast character dialogue cloning, fitting comfortably on GPUs with 4–6 GB VRAM (such as the GTX 1650/1660 Ti and RTX 30/40/50-series).
+A local, OpenAI-compatible text-to-speech server built around a **3-model hybrid workflow**. It is intended for one or a few trusted users on a local network. It pairs lightweight CPU narration with GPU-accelerated zero-shot voice design and fast character dialogue cloning, fitting comfortably on GPUs with 4–6 GB VRAM (such as the GTX 1650/1660 Ti and RTX 30/40/50-series).
 
 ---
 
@@ -90,13 +90,15 @@ Start the server on port 8001:
 OMP_NUM_THREADS=4 .venv/bin/python server.py --device cuda:0 --port 8001
 ```
 
+The default `--host 127.0.0.1` accepts connections only from this machine. To serve trusted devices on your local network, add `--host 0.0.0.0`. This server is not intended to be exposed directly to the public internet; it has no per-user accounts or request quotas.
+
 * **GPU selection**: Default is `--device cuda:0`. Use `--device cpu` for standard CPU generation.
 * **GPU Kokoro**: Add `--kokoro-device cuda:0` to keep the narrator on GPU in FP32. CPU remains the default. Kokoro loads before Qwen so its resident weights count toward Qwen's VRAM plan.
 * **Keep all models loaded**: Add `--keep-models-loaded` to preload and retain both Qwen models and their CUDA graphs, avoiding reload/capture delays when switching between voice creation and dialogue. Kokoro stays on its configured device. With `--kokoro-device cuda:0` and the default 4096-token cache, all three use roughly **8–9 GiB reserved VRAM** in the benchmarks; the automatic parallel comparison peaked at **8.46 GiB**. Budget roughly **9 GiB with headroom**; a 12 GB GPU is a comfortable target. Other applications and longer/slower audio can require more memory. The adaptive CPU offloading plan still applies; the default remains one resident Qwen model with swapping.
 * **Low-VRAM GPUs (e.g. 4 GB cards)**: Add `--max-seq-len 1024` or `--clone-device cpu`.
 * **6 GB starting configuration**: Use `--kokoro-device cuda:0 --max-seq-len 1024`. The planner can move Qwen's speech decoder and text embedding to CPU when needed. A 5 GiB allocator-cap benchmark on an RTX 5060 Ti passed automatic parallel narration, dialogue, model swaps, and a near-240-character Kokoro chunk, peaking at **4.42 GiB reserved**. This leaves room for driver/display memory within a 6 GiB budget; slower speech or other workloads may need more memory. See [benchmark results](AGENTS.md#automatic-parallel-narration).
 * **Narration only**: Pass `--design-only` to disable NPC cloning while keeping Kokoro available.
-* **API Security**: Set `export TTS_API_KEY="your-secret-key"` to require Bearer token authentication.
+* **Optional API key**: Set `export TTS_API_KEY="your-secret-key"` to require Bearer token authentication if other devices on the network should not have access.
 
 Narration automatically runs alongside Qwen on its own worker, whether Kokoro uses CPU or GPU. GPU Kokoro owns a separate CUDA stream; both CPU and GPU Kokoro use a private random generator so narration does not change seeded Qwen output. Each backend still queues its own additional requests, and background NPC preparation shares Qwen's queue. Narration pauses during Qwen model loading and graph capture, then resumes alongside inference. This works with swapping or `--keep-models-loaded` and requires no parallel-mode flag. The memory planner automatically reserves 1 GiB of workspace for GPU narration on the same device, in addition to its resident weights. `/health` reports `kokoro_device`, `keep_models_loaded`, and `shared_cuda_worker=false`.
 
@@ -253,6 +255,16 @@ reports `applied` or `fallback`.
 ## Technical Details & Architecture
 
 For deep-dive technical documentation—including CUDA graph management, hardware adaptation heuristics (`GemvLinear`), memory offloading plans, background alignment algorithms, and performance benchmarks—see **[AGENTS.md](AGENTS.md)**.
+
+---
+
+## Tests
+
+Run the maintained unit tests with:
+
+```bash
+.venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+```
 
 ---
 
