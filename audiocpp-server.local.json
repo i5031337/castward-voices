@@ -1,0 +1,66 @@
+{
+  "host": "127.0.0.1",
+  "port": 7862,
+  "backend": "cuda",
+  "threads": 4,
+  "lazy_load": true,
+  "max_loaded_models": 2,
+  "models": [
+    {
+      "id": "ming",
+      "family": "ming3_tts",
+      "path": "/home/akoca/Desktop/Ming/models/ming-audiocpp/ming-3.0-tts-0.5b-q8_0.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "device": 1
+    },
+    {
+      "id": "kokoro",
+      "family": "kokoro_tts",
+      "path": "/home/akoca/Desktop/Ming/models/audiocpp-extra/Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "device": 0
+    },
+    {
+      "id": "kokoro-stream",
+      "family": "kokoro_tts",
+      "path": "/home/akoca/Desktop/Ming/models/audiocpp-extra/Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf",
+      "task": "tts",
+      "mode": "streaming",
+      "device": 0
+    },
+    {
+      "id": "qwen-design-1.7b",
+      "family": "qwen3_tts",
+      "path": "/home/akoca/Desktop/Ming/models/audiocpp-extra/Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF/qwen3-tts-12hz-1.7b-voicedesign-q8_0.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "device": 1
+    },
+    {
+      "id": "qwen-base-0.6b",
+      "family": "qwen3_tts",
+      "path": "/home/akoca/Desktop/Ming/models/audiocpp-extra/Qwen3-TTS-12Hz-0.6B-Base-GGUF/qwen3-tts-12hz-0.6b-base-q8_0.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "device": 1
+    },
+    {
+      "id": "qwen-base-1.7b",
+      "family": "qwen3_tts",
+      "path": "/home/akoca/Desktop/Ming/models/audiocpp-extra/Qwen3-TTS-12Hz-1.7B-Base-GGUF/qwen3-tts-12hz-1.7b-base-q8_0_v2.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "device": 1
+    },
+    {
+      "id": "qwen-custom-1.7b",
+      "family": "qwen3_tts",
+      "path": "/home/akoca/Desktop/Ming/models/audiocpp-extra/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF/qwen3-tts-12hz-1.7b-customvoice-q8_0.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "device": 1
+    }
+  ]
+}

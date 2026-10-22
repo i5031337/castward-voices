@@ -7,10 +7,10 @@ import re
 
 def decode_sillynpc_voice(body):
     prefix = "sillynpc-v1:"
-    if not body.voice.startswith(prefix):
+    if not body.voice or not body.voice.startswith(prefix):
         return body
-    if body.model != "qwen3-tts" or body.npc_id or body.instructions:
-        raise ValueError("SillyNPC voice metadata requires qwen3-tts without other NPC fields")
+    if body.npc_id or body.instructions:
+        raise ValueError("SillyNPC voice metadata cannot be combined with other NPC fields")
     encoded = body.voice[len(prefix):]
     try:
         decoded = base64.b64decode(encoded + "=" * (-len(encoded) % 4), altchars=b"-_", validate=True)
@@ -23,6 +23,6 @@ def decode_sillynpc_voice(body):
         raise ValueError("Invalid SillyNPC NPC ID")
     if not isinstance(data["instructions"], str) or not data["instructions"].strip():
         raise ValueError("SillyNPC voice description is required")
-    if type(data["max_new_tokens"]) is not int or not 2 <= data["max_new_tokens"] <= 512:
+    if type(data["max_new_tokens"]) is not int or not 2 <= data["max_new_tokens"] <= 4096:
         raise ValueError("Invalid SillyNPC speech token budget")
     return type(body).model_validate({**body.model_dump(), "voice": "alloy", **data})

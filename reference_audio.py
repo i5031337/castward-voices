@@ -30,7 +30,7 @@ def sentence_spans(text):
     return spans
 
 
-def select_aligned_segment(wav, sr, text, words):
+def select_aligned_segment(wav, sr, text, words, min_seconds=MIN_REFERENCE_SECONDS, max_seconds=MAX_REFERENCE_SECONDS):
     """Return a complete sentence/group only when aligned text matches exactly."""
     if not words or normalized("".join(word.word for word in words)) != normalized(text):
         raise ValueError("Alignment did not cover the exact dialogue text")
@@ -61,7 +61,7 @@ def select_aligned_segment(wav, sr, text, words):
             if after:
                 end = min(end, (aligned[-1][3] + after[0][2]) / 2)
             duration = end - start
-            if MIN_REFERENCE_SECONDS <= duration <= MAX_REFERENCE_SECONDS:
+            if min_seconds <= duration <= max_seconds:
                 candidates.append((abs(duration - 7.0), start, end, char_start, char_end))
     if not candidates:
         raise ValueError("No complete sentence fits the reference duration budget")
@@ -70,22 +70,26 @@ def select_aligned_segment(wav, sr, text, words):
 
 
 class ReferenceSelector:
-    def __init__(self):
+    def __init__(self, model_path=None, min_seconds=MIN_REFERENCE_SECONDS, max_seconds=MAX_REFERENCE_SECONDS):
         self.model = None
+        self.model_path = Path(model_path) if model_path else None
+        self.min_seconds = min_seconds
+        self.max_seconds = max_seconds
 
     def select(self, wav, sr, text, language, *, may_be_truncated=False):
         duration = len(wav) / sr
         if may_be_truncated:
             raise ValueError("Dialogue may have reached its generation token budget")
-        if MIN_REFERENCE_SECONDS <= duration <= MAX_REFERENCE_SECONDS:
+        if self.min_seconds <= duration <= self.max_seconds:
             return wav, text, "dialogue"
-        if duration < MIN_REFERENCE_SECONDS:
+        if duration < self.min_seconds:
             raise ValueError("Dialogue is too short for a reference")
-        if not ALIGNMENT_MODEL.is_file():
+        model_path = self.model_path or ALIGNMENT_MODEL
+        if not model_path.is_file():
             raise ValueError("Local alignment model is missing")
         if self.model is None:
             import stable_whisper
-            self.model = stable_whisper.load_model(str(ALIGNMENT_MODEL), device="cpu")
+            self.model = stable_whisper.load_model(str(model_path), device="cpu")
         from scipy.signal import resample_poly
         from math import gcd
         divisor = gcd(sr, 16000)
@@ -101,5 +105,5 @@ class ReferenceSelector:
                                   verbose=None, regroup=False, vad=False)
         if result is None:
             raise ValueError("Dialogue alignment failed")
-        segment, transcript = select_aligned_segment(wav, sr, text, result.all_words())
+        segment, transcript = select_aligned_segment(wav, sr, text, result.all_words(), self.min_seconds, self.max_seconds)
         return segment, transcript, "aligned_dialogue"

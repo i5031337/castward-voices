@@ -1,133 +1,186 @@
-import io
+import asyncio
 import base64
-import json
-import threading
-import time
-import unittest
 from concurrent.futures import ThreadPoolExecutor
-
+import hashlib
+import io
+import json
+from pathlib import Path
+import tempfile
+import threading
+import unittest
 import numpy as np
 import soundfile as sf
 from fastapi.testclient import TestClient
-
-from server import SpeechRequest, create_app, decode_sillynpc_voice, encode_audio
-
-
-class SillyNpcProxyTests(unittest.TestCase):
-    def test_encoded_voice_recovers_npc_fields(self):
-        fields = {"npc_id": "sn_card-123_v2", "instructions": "A warm, soft voice — clear and calm.",
-                  "max_new_tokens": 128}
-        voice = "sillynpc-v1:" + base64.urlsafe_b64encode(json.dumps(fields).encode()).decode().rstrip("=")
-        body = decode_sillynpc_voice(SpeechRequest(model="qwen3-tts", input="Hello", voice=voice))
-        self.assertEqual(body.npc_id, fields["npc_id"])
-        self.assertEqual(body.instructions, fields["instructions"])
-        self.assertEqual(body.max_new_tokens, 128)
-        self.assertEqual(body.voice, "alloy")
-        self.assertEqual(decode_sillynpc_voice(SpeechRequest(model="kokoro", input="Hello", voice="alloy")).voice,
-                         "alloy")
-        with self.assertRaises(ValueError):
-            decode_sillynpc_voice(SpeechRequest(model="kokoro", input="Hello", voice=voice))
-        with self.assertRaises(ValueError):
-            decode_sillynpc_voice(SpeechRequest(model="qwen3-tts", input="Hello", voice="sillynpc-v1:bad!"))
+from server import create_app
 
 
-class FakeTTS:
-    plan = "test"
+CONFIG={'default_model':'actor','aliases':{'tts-1':'actor'},'alignment_model':None,'models':{
+    'actor':{'backend_model':'native','design_model':'native','clone_model':'native','instruction_option':'caption',
+             'default_voice':'warm','voice_descriptions':{'warm':'Warm voice'}},
+    'reader':{'backend_model':'reader','streaming_model':'stream','streaming_sample_rate':24000,'native_speed':True,
+              'context':True,'voice_aliases':{'george':'british'}}}}
 
+
+class FakeBackend:
     def __init__(self):
-        self.active = 0
-        self.max_active = 0
-        self.calls = []
-        self.thread_ids = set()
-
-    def generate_voice_design(self, **kwargs):
-        self.active += 1
-        self.max_active = max(self.max_active, self.active)
-        self.thread_ids.add(threading.get_ident())
+        self.calls=[];self.closed=False;self.stream_closed=False;self.fail=False
+    def discover(self):
+        return [{'id':name} for name in ('native','reader','stream')]
+    def voices(self,profile):
+        return ['british','american']
+    def generate(self,profile,body,**kwargs):
+        self.calls.append((body,kwargs))
+        if self.fail:
+            raise RuntimeError('failed')
+        samples=22050 if body.input=='short' and kwargs.get('mode')=='design' else 176400
+        return np.sin(np.arange(samples)*0.1).astype(np.float32)*0.1,44100
+    def stream(self,profile,body):
         try:
-            time.sleep(0.01)
-            self.calls.append(kwargs)
-            if kwargs["text"] == "fail":
-                raise RuntimeError("test failure")
-            return [np.sin(np.arange(2400) * 0.1).astype(np.float32) * 0.1], 24000
+            yield np.ones(2400,dtype=np.float32)*0.1
+            yield np.ones(4800,dtype=np.float32)*0.2
         finally:
-            self.active -= 1
+            self.stream_closed=True
+    def close(self): self.closed=True
 
 
 class ServerTests(unittest.TestCase):
     def setUp(self):
-        self.tts = FakeTTS()
-        self.loads = []
-
-        def loader(**kwargs):
-            self.loads.append((kwargs, threading.get_ident()))
-            return self.tts
-
-        self.client = TestClient(create_app(device="cpu", api_key="test-key", loader=loader,
-                                            clone_model=None, kokoro_enabled=False))
+        self.storage=tempfile.TemporaryDirectory();self.backend=FakeBackend()
+        self.start()
+    def start(self):
+        self.client=TestClient(create_app(config=CONFIG,backend=self.backend,voices_dir=self.storage.name,api_key='key'))
         self.client.__enter__()
-        self.headers = {"Authorization": "Bearer test-key"}
-
     def tearDown(self):
-        self.client.__exit__(None, None, None)
+        self.client.__exit__(None,None,None);self.storage.cleanup()
+    def request(self,**kwargs):
+        body={'model':'actor','input':'Hello','response_format':'wav'};body.update(kwargs)
+        return self.client.post('/v1/audio/speech',json=body,headers={'Authorization':'Bearer key'})
+    def folder(self,npc='guard'):
+        return Path(self.storage.name)/hashlib.sha256(npc.encode()).hexdigest()
 
-    def request(self, **kwargs):
-        body = {"model": "qwen3-tts", "input": "Hello", "voice": "alloy", "response_format": "wav"}
-        body.update(kwargs)
-        return self.client.post("/v1/audio/speech", json=body, headers=self.headers)
+    def test_all_inference_uses_backend_and_output_is_resampled(self):
+        r=self.request(instructions='A guard',seed=42,temperature=0,options={'future_option':7})
+        self.assertEqual(r.status_code,200,r.text)
+        audio,rate=sf.read(io.BytesIO(r.content));self.assertEqual((len(audio),rate),(96000,24000))
+        self.assertEqual(self.backend.calls[-1][1]['instruction'],'A guard')
+        self.assertEqual(self.backend.calls[-1][0].options,{'future_option':7})
+        self.assertEqual(self.request(model='tts-1').status_code,200)
 
-    def test_speech_contract_and_voice_design(self):
-        response = self.request(instructions="A gruff pirate", language="English", seed=42)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["content-type"], "audio/wav")
-        audio, sr = sf.read(io.BytesIO(response.content))
-        self.assertEqual(sr, 24000)
-        self.assertEqual(len(audio), 2400)
-        self.assertEqual(self.tts.calls[-1]["instruct"], "A gruff pirate")
-        self.assertEqual(len(self.loads), 1)
-        self.assertEqual(self.tts.thread_ids, {self.loads[0][1]})
+    def test_create_reuse_restart_and_legacy_reference_ignore_feature_cache(self):
+        first=self.request(npc_id='guard',instructions='A guard')
+        self.assertEqual(first.status_code,200,first.text)
+        self.assertEqual(first.headers['x-voice-status'],'preparing')
+        folder=self.folder();reference=(folder/'reference.wav').read_bytes()
+        (folder/'prompt.npz').write_bytes(b'not a valid feature file')
+        metadata=json.loads((folder/'metadata.json').read_text());metadata.update(version=2,clone_model='legacy-provider')
+        (folder/'metadata.json').write_text(json.dumps(metadata))
+        self.client.__exit__(None,None,None);self.start()
+        self.assertEqual(self.request(npc_id='guard',instructions='Changed').status_code,200)
+        self.assertEqual((folder/'reference.wav').read_bytes(),reference)
+        self.assertEqual(self.backend.calls[-1][1]['mode'],'clone')
+        self.assertEqual(sum(k.get('mode')=='design' for _,k in self.backend.calls),1)
 
-    def test_openai_defaults_and_model_discovery(self):
-        response = self.client.post("/v1/audio/speech", headers=self.headers,
-                                    json={"model": "tts-1", "input": "Hello", "voice": "alloy"})
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["content-type"], "audio/mpeg")
-        info = sf.info(io.BytesIO(response.content))
-        self.assertEqual(info.format, "MP3")
-        models = self.client.get("/v1/models", headers=self.headers).json()
-        self.assertEqual(models["data"][0]["id"], "qwen3-tts")
+    def test_short_first_line_is_extended_with_its_own_reference(self):
+        r=self.request(npc_id='guard',instructions='A guard',input='short')
+        self.assertEqual(r.status_code,200,r.text)
+        meta=json.loads((self.folder()/'metadata.json').read_text())
+        self.assertEqual(meta['status'],'ready');self.assertEqual(meta['reference_source'],'extended_dialogue')
+        _,kwargs=self.backend.calls[-1]
+        self.assertEqual(kwargs['mode'],'clone');self.assertIn('reference',kwargs);self.assertNotIn('reference_text',kwargs)
 
-    def test_validation_and_auth(self):
-        for override in ({"model": "missing"}, {"input": " "}, {"input": "x" * 4097},
-                         {"speed": 0}, {"stream_format": "sse"}, {"language": "missing"},
-                         {"response_format": "invalid"}):
-            with self.subTest(override=override):
-                response = self.request(**override)
-                self.assertEqual(response.status_code, 400)
-                self.assertEqual(response.json()["error"]["type"], "invalid_request_error")
-        self.assertEqual(self.client.get("/v1/models").status_code, 401)
-        self.assertEqual(self.client.get("/health").status_code, 200)
-        self.assertEqual(self.tts.calls, [])
+    def test_creation_is_serialized_and_recovery_preserves_first_recording(self):
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            results=list(pool.map(lambda _:self.request(npc_id='guard',instructions='A guard'),range(3)))
+        self.assertTrue(all(r.status_code==200 for r in results))
+        self.assertEqual(sum(k.get('mode')=='design' for _,k in self.backend.calls),1)
+        original=(self.folder()/'dialogue.wav').read_bytes()
+        self.backend.fail=True
+        self.assertEqual(self.request(npc_id='guard').status_code,502)
+        self.backend.fail=False
+        self.assertEqual(self.request(npc_id='guard').status_code,200)
+        self.assertEqual((self.folder()/'dialogue.wav').read_bytes(),original)
 
-    def test_concurrent_requests_are_serialized_and_failures_recover(self):
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            responses = list(executor.map(lambda _: self.request(), range(3)))
-        self.assertTrue(all(response.status_code == 200 for response in responses))
-        self.assertEqual(self.tts.max_active, 1)
-        self.assertEqual(len(self.loads), 1)
-        self.assertEqual(self.request(input="fail").status_code, 500)
-        self.assertEqual(self.request().status_code, 200)
+    def test_model_auth_bridge_and_backend_option_validation(self):
+        self.assertEqual(self.client.get('/v1/models').status_code,401)
+        self.assertEqual(self.client.get('/health').json()['backend'],'audio.cpp')
+        self.assertEqual(self.request(model='missing').status_code,400)
+        self.assertEqual(self.request(model='reader',npc_id='guard').status_code,400)
+        self.assertEqual(self.request(npc_id='guard').status_code,400)
+        fields={'npc_id':'sn_guard','instructions':'A guard','max_new_tokens':128}
+        voice='sillynpc-v1:'+base64.urlsafe_b64encode(json.dumps(fields).encode()).decode().rstrip('=')
+        self.assertEqual(self.request(voice=voice).status_code,200)
+        self.assertEqual(self.request(model='reader',voice=voice).status_code,400)
 
-    def test_lossless_formats_and_pcm(self):
-        wav = np.sin(np.arange(24000) * 0.1).astype(np.float32) * 0.1
-        for fmt in ("wav", "flac"):
-            decoded, sr = sf.read(io.BytesIO(encode_audio(wav, 24000, fmt, 1)))
-            self.assertEqual(sr, 24000)
-            np.testing.assert_allclose(decoded, wav, atol=1 / 32768)
-        pcm = np.frombuffer(encode_audio(wav, 24000, "pcm", 1), dtype="<i2")
-        self.assertEqual(len(pcm), len(wav))
-        np.testing.assert_allclose(pcm / 32768, wav, atol=1 / 32768)
+    def test_streaming_real_chunks_and_context_fallback(self):
+        r=self.request(model='reader',stream=True,response_format='pcm')
+        self.assertEqual(r.status_code,200,r.text)
+        self.assertEqual(len(r.content),14400);self.assertTrue(self.backend.stream_closed)
+        self.assertEqual(r.headers['x-audio-sample-rate'],'24000')
+        self.assertEqual(self.request(stream=True,response_format='pcm').status_code,400)
+        r=self.request(model='reader',context_before='Before. ',context_after=' After.')
+        self.assertEqual(r.status_code,200,r.text);self.assertEqual(r.headers['x-narration-context'],'fallback')
+        self.assertEqual(self.backend.calls[-2][1]['text'],'Before. Hello After.')
 
+    def test_first_audio_is_delivered_before_reference_preparation(self):
+        original=self.backend.generate
+        body_sent=[]
+        def generate(profile,body,**kwargs):
+            if kwargs.get('mode')=='clone': self.assertTrue(body_sent)
+            return original(profile,body,**kwargs)
+        self.backend.generate=generate
+        async def exercise():
+            app=create_app(config=CONFIG,backend=self.backend,voices_dir=self.storage.name)
+            async with app.router.lifespan_context(app):
+                payload=json.dumps({'model':'actor','input':'short','npc_id':'first','instructions':'A guard','response_format':'wav'}).encode()
+                async def receive():return {'type':'http.request','body':payload,'more_body':False}
+                async def send(message):
+                    if message['type']=='http.response.body':
+                        self.assertTrue(message['body'].startswith(b'RIFF'));body_sent.append(True)
+                await app({'type':'http','asgi':{'version':'3.0'},'http_version':'1.1','method':'POST','scheme':'http','path':'/v1/audio/speech','raw_path':b'/v1/audio/speech','query_string':b'','headers':[(b'content-type',b'application/json')],'server':('test',80),'client':('test',1)},receive,send)
+        asyncio.run(exercise())
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_stream_closes_on_asgi_disconnect_before_next_inference(self):
+        from starlette.requests import ClientDisconnect
+        sent=[]
+        def stream(profile,body):
+            try:
+                yield np.ones(2400,dtype=np.float32)*0.1
+                self.fail('Client disconnected; second synthesis must not run')
+            finally:
+                self.backend.stream_closed=True
+        self.backend.stream=stream
+        async def exercise():
+            app=create_app(config=CONFIG,backend=self.backend,voices_dir=self.storage.name)
+            async with app.router.lifespan_context(app):
+                payload=json.dumps({'model':'reader','input':'Hello','response_format':'pcm','stream':True}).encode()
+                async def receive():return {'type':'http.request','body':payload,'more_body':False}
+                async def send(message):
+                    if message['type']=='http.response.body' and message['body']:
+                        sent.append(message['body']);raise OSError('Disconnected')
+                scope={'type':'http','asgi':{'version':'3.0','spec_version':'2.4'},'http_version':'1.1','method':'POST','scheme':'http','path':'/v1/audio/speech','raw_path':b'/v1/audio/speech','query_string':b'','headers':[(b'content-type',b'application/json')],'server':('test',80),'client':('test',1)}
+                with self.assertRaises(ClientDisconnect):await app(scope,receive,send)
+        asyncio.run(exercise());self.assertEqual(len(sent),1);self.assertTrue(self.backend.stream_closed)
+
+    def test_failed_background_extension_and_restart_retry_preserve_identity(self):
+        original=self.backend.generate
+        def generate(profile,body,**kwargs):
+            if kwargs.get('mode')=='clone':raise RuntimeError('reference extension failed')
+            return original(profile,body,**kwargs)
+        self.backend.generate=generate
+        r=self.request(npc_id='guard',instructions='A guard',input='short')
+        self.assertEqual(r.status_code,200)
+        folder=self.folder();audio=(folder/'dialogue.wav').read_bytes()
+        self.assertEqual(json.loads((folder/'metadata.json').read_text())['status'],'failed')
+        self.backend.generate=original
+        self.client.__exit__(None,None,None);self.start()
+        self.assertEqual(self.request(npc_id='guard').status_code,200)
+        self.assertEqual((folder/'dialogue.wav').read_bytes(),audio)
+        self.assertEqual(json.loads((folder/'metadata.json').read_text())['status'],'ready')
+
+    def test_pending_record_resumes_after_restart(self):
+        self.assertEqual(self.request(npc_id='guard',instructions='A guard').status_code,200)
+        folder=self.folder();meta=json.loads((folder/'metadata.json').read_text());meta['status']='preparing'
+        (folder/'metadata.json').write_text(json.dumps(meta));(folder/'reference.wav').unlink()
+        self.client.__exit__(None,None,None);self.start()
+        self.assertEqual(self.request(npc_id='guard').status_code,200)
+        self.assertEqual(json.loads((folder/'metadata.json').read_text())['status'],'ready')

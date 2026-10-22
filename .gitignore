@@ -6,3 +6,7 @@ out/
 __pycache__/
 *.wav
 :memory:.ses
+
+# Local audio.cpp runtime
+.cache/
+audiocpp-backend.log

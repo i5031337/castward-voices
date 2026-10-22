@@ -1,0 +1,256 @@
+{
+  "backend_url": "http://127.0.0.1:7862",
+  "default_model": "npc",
+  "output_sample_rate": 24000,
+  "alignment_model": "models/whisper/tiny.pt",
+  "aliases": {
+    "tts-1": "npc",
+    "tts-1-hd": "npc",
+    "gpt-4o-mini-tts": "npc",
+    "qwen3-tts-0.6b": "qwen3-tts",
+    "kokoro": "narrator"
+  },
+  "models": {
+    "npc": {
+      "backend_model": "ming",
+      "design_model": "ming",
+      "clone_model": "ming",
+      "instruction_option": "instruct",
+      "language_map": {
+        "English": "en",
+        "Chinese": "zh",
+        "Japanese": "ja",
+        "Korean": "ko",
+        "German": "de",
+        "French": "fr",
+        "Spanish": "es"
+      },
+      "default_voice": "alloy",
+      "voice_descriptions": {
+        "alloy": "A warm, clear narrator with a neutral American accent.",
+        "ash": "A calm male voice with a clear, conversational delivery.",
+        "ballad": "A gentle male storyteller with expressive, measured delivery.",
+        "coral": "A bright, friendly female voice with an expressive delivery.",
+        "echo": "A smooth male voice with a relaxed conversational delivery.",
+        "fable": "An expressive storyteller with a British accent.",
+        "onyx": "A deep male narrator with a rich baritone and measured delivery.",
+        "nova": "An energetic young woman with a clear, upbeat delivery.",
+        "sage": "A calm, gentle voice with a thoughtful, measured delivery.",
+        "shimmer": "A soft, warm female voice with a clear delivery.",
+        "verse": "An expressive, lively voice with a conversational delivery.",
+        "marin": "A warm female narrator with a clear, natural delivery.",
+        "cedar": "A warm male narrator with a clear, natural delivery."
+      },
+      "design_options": {
+        "template_name": "voice_design"
+      },
+      "clone_options": {
+        "template_name": "tts"
+      },
+      "max_input_chars": 4096,
+      "display_name": "Ming 0.5B · design & clone",
+      "description": "Design and clone with Ming 0.5B. Built-in voice IDs use the ip template; description-based voices use voice_design.",
+      "options": {
+        "template_name": "tts"
+      },
+      "preset_options": {
+        "template_name": "ip"
+      },
+      "voice_option": "voice_id",
+      "option_dependencies": {
+        "voice_id": {
+          "template_name": [
+            "ip"
+          ]
+        },
+        "speed": {
+          "template_name": [
+            "basic"
+          ]
+        },
+        "pitch": {
+          "template_name": [
+            "basic"
+          ]
+        },
+        "volume": {
+          "template_name": [
+            "basic"
+          ]
+        },
+        "emotion": {
+          "template_name": [
+            "emotion"
+          ]
+        },
+        "dialect": {
+          "template_name": [
+            "dialect"
+          ]
+        }
+      },
+      "instruction_conditions": {
+        "template_name": [
+          "tts",
+          "multilingual",
+          "voice_design",
+          "freeform"
+        ]
+      }
+    },
+    "narrator": {
+      "backend_model": "kokoro",
+      "streaming_model": "kokoro-stream",
+      "streaming_sample_rate": 24000,
+      "language_map": {
+        "English": null,
+        "Auto": null
+      },
+      "default_voice": "af_alloy",
+      "voice_aliases": {
+        "alloy": "af_alloy",
+        "aoede": "af_aoede",
+        "bella": "af_bella",
+        "heart": "af_heart",
+        "jessica": "af_jessica",
+        "kore": "af_kore",
+        "nicole": "af_nicole",
+        "nova": "af_nova",
+        "river": "af_river",
+        "sarah": "af_sarah",
+        "sky": "af_sky",
+        "adam": "am_adam",
+        "echo": "am_echo",
+        "eric": "am_eric",
+        "fenrir": "am_fenrir",
+        "liam": "am_liam",
+        "michael": "am_michael",
+        "onyx": "am_onyx",
+        "puck": "am_puck",
+        "santa": "am_santa",
+        "alice": "bf_alice",
+        "emma": "bf_emma",
+        "isabella": "bf_isabella",
+        "lily": "bf_lily",
+        "daniel": "bm_daniel",
+        "fable": "bm_fable",
+        "george": "bm_george",
+        "lewis": "bm_lewis"
+      },
+      "context": true,
+      "native_speed": true,
+      "display_name": "Kokoro 82M · preset voices",
+      "description": "Preset narration with Kokoro; voice design and cloning are not supported."
+    },
+    "qwen3-tts": {
+      "backend_model": "qwen-design-1.7b",
+      "design_model": "qwen-design-1.7b",
+      "clone_model": "qwen-base-0.6b",
+      "instruction_option": "instruct",
+      "speaker_only_option": "x_vector_only_mode",
+      "seed_max": 4294967295,
+      "default_voice": "alloy",
+      "voice_descriptions": {
+        "alloy": "A warm, clear narrator with a neutral American accent.",
+        "ash": "A calm male voice with a clear, conversational delivery.",
+        "ballad": "A gentle male storyteller with expressive, measured delivery.",
+        "coral": "A bright, friendly female voice with an expressive delivery.",
+        "echo": "A smooth male voice with a relaxed conversational delivery.",
+        "fable": "An expressive storyteller with a British accent.",
+        "onyx": "A deep male narrator with a rich baritone and measured delivery.",
+        "nova": "An energetic young woman with a clear, upbeat delivery.",
+        "sage": "A calm, gentle voice with a thoughtful, measured delivery.",
+        "shimmer": "A soft, warm female voice with a clear delivery.",
+        "verse": "An expressive, lively voice with a conversational delivery.",
+        "marin": "A warm female narrator with a clear, natural delivery.",
+        "cedar": "A warm male narrator with a clear, natural delivery."
+      },
+      "language_map": {
+        "Auto": "auto",
+        "English": "en",
+        "Chinese": "zh",
+        "Japanese": "ja",
+        "Korean": "ko",
+        "German": "de",
+        "French": "fr",
+        "Russian": "ru",
+        "Portuguese": "pt",
+        "Spanish": "es",
+        "Italian": "it"
+      },
+      "display_name": "Qwen · design 1.7B / clone 0.6B",
+      "description": "Design: Qwen 1.7B VoiceDesign. Clone: Qwen 0.6B Base. Shares the same designer as the 1.7B cloning profile."
+    },
+    "qwen3-tts-1.7b": {
+      "backend_model": "qwen-design-1.7b",
+      "design_model": "qwen-design-1.7b",
+      "clone_model": "qwen-base-1.7b",
+      "instruction_option": "instruct",
+      "speaker_only_option": "x_vector_only_mode",
+      "seed_max": 4294967295,
+      "default_voice": "alloy",
+      "voice_descriptions": {
+        "alloy": "A warm, clear narrator with a neutral American accent.",
+        "ash": "A calm male voice with a clear, conversational delivery.",
+        "ballad": "A gentle male storyteller with expressive, measured delivery.",
+        "coral": "A bright, friendly female voice with an expressive delivery.",
+        "echo": "A smooth male voice with a relaxed conversational delivery.",
+        "fable": "An expressive storyteller with a British accent.",
+        "onyx": "A deep male narrator with a rich baritone and measured delivery.",
+        "nova": "An energetic young woman with a clear, upbeat delivery.",
+        "sage": "A calm, gentle voice with a thoughtful, measured delivery.",
+        "shimmer": "A soft, warm female voice with a clear delivery.",
+        "verse": "An expressive, lively voice with a conversational delivery.",
+        "marin": "A warm female narrator with a clear, natural delivery.",
+        "cedar": "A warm male narrator with a clear, natural delivery."
+      },
+      "language_map": {
+        "Auto": "auto",
+        "English": "en",
+        "Chinese": "zh",
+        "Japanese": "ja",
+        "Korean": "ko",
+        "German": "de",
+        "French": "fr",
+        "Russian": "ru",
+        "Portuguese": "pt",
+        "Spanish": "es",
+        "Italian": "it"
+      },
+      "display_name": "Qwen · design 1.7B / clone 1.7B",
+      "description": "Design: the same Qwen 1.7B VoiceDesign. Clone: Qwen 1.7B Base. Only the cloning checkpoint differs from the 0.6B profile."
+    },
+    "qwen3-customvoice": {
+      "backend_model": "qwen-custom-1.7b",
+      "instruction_option": "instruct",
+      "seed_max": 4294967295,
+      "default_voice": "ryan",
+      "voice_aliases": {
+        "aiden": "aiden",
+        "dylan": "dylan",
+        "eric": "eric",
+        "ono_anna": "ono_anna",
+        "ryan": "ryan",
+        "serena": "serena",
+        "sohee": "sohee",
+        "uncle_fu": "uncle_fu",
+        "vivian": "vivian"
+      },
+      "language_map": {
+        "Auto": "auto",
+        "English": "en",
+        "Chinese": "zh",
+        "Japanese": "ja",
+        "Korean": "ko",
+        "German": "de",
+        "French": "fr",
+        "Russian": "ru",
+        "Portuguese": "pt",
+        "Spanish": "es",
+        "Italian": "it"
+      },
+      "display_name": "Qwen · CustomVoice 1.7B (presets)",
+      "description": "Qwen 1.7B CustomVoice provides nine fixed speakers with style instructions. It does not design or clone voices."
+    }
+  }
+}

@@ -1,3 +1,7 @@
+> **Current server: audio.cpp.** All synthesis now runs through the native backend. See [AUDIOCPP.md](AUDIOCPP.md) for startup, configuration, and the current architecture. The architecture, commands, and measurements below describe the previous Python runtime; its helpers remain available for historical experiments.
+
+The current server includes **Voice Atelier**, a local web UI at `/` for model-specific voice design, cloning, and preset synthesis. See [the web UI guide](AUDIOCPP.md#voice-atelier-web-ui).
+
 # System Architecture & Technical Specifications (AGENTS.md)
 
 This document provides technical reference for developers, maintainers, and AI coding agents working on the `qwen3-tts` engine.

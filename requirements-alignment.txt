@@ -1,0 +1,3 @@
+-r requirements.txt
+# Optional CPU alignment for long references and context-aware narration cuts.
+stable-ts==2.19.1

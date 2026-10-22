@@ -1,3 +1,7 @@
+> **Current server: audio.cpp.** All synthesis now runs through the native backend. See [AUDIOCPP.md](AUDIOCPP.md) for startup, configuration, and the current architecture. The architecture, commands, and measurements below describe the previous Python runtime; its helpers remain available for historical experiments.
+
+The current server includes **Voice Atelier**, a local web UI at `/` for model-specific voice design, cloning, and preset synthesis. See [the web UI guide](AUDIOCPP.md#voice-atelier-web-ui).
+
 # Qwen3-TTS Speech Server
 
 A local, OpenAI-compatible text-to-speech server built around a **3-model hybrid workflow**. It is intended for one or a few trusted users on a local network. It pairs lightweight CPU narration with GPU-accelerated zero-shot voice design and fast character dialogue cloning, fitting comfortably on GPUs with 4–6 GB VRAM (such as the GTX 1650/1660 Ti and RTX 30/40/50-series).
