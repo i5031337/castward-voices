@@ -8,7 +8,7 @@ A local, OpenAI-compatible text-to-speech server built around a **3-model hybrid
 
 ---
 
-## The 3-Model Workflow
+## Historical Python Runtime: The 3-Model Workflow
 
 Most voice applications need two very different things: long, cheap narrator reading and distinct, consistent character voices. This server solves that by orchestrating three specialized models behind a single OpenAI-compatible `/v1/audio/speech` endpoint:
 
@@ -56,63 +56,42 @@ Most voice applications need two very different things: long, cheap narrator rea
 
 ## Quick Setup
 
-### 1. Requirements & Dependencies
-* Python 3.11 with [uv](https://astral.sh/uv) package manager.
-* NVIDIA GPU with driver supporting CUDA 12.8+ (CPU fallback supported via `--device cpu`).
-* FFmpeg on `PATH` (used for Opus, AAC, and tempo changes).
+The current server uses **audio.cpp** for all synthesis. Python provides the OpenAI-compatible API and Voice Atelier web UI. The workflow above describes the previous Python runtime.
+
+For a fresh Python environment:
 
 ```bash
-# Create virtual environment and install locked dependencies
 uv venv --python 3.11 .venv
 uv pip install --python .venv/bin/python -r requirements.lock.txt
 ```
 
-### 2. Download Model Weights
-Run these commands once to download weights and voices into the local directories expected by the server:
-
-```bash
-# Kokoro model and 28 English voice packs (~320 MB)
-.venv/bin/hf download hexgrad/Kokoro-82M config.json kokoro-v1_0.pth --local-dir models/kokoro
-.venv/bin/hf download hexgrad/Kokoro-82M --include 'voices/[ab]*.pt' --local-dir models/kokoro
-
-# Qwen3-TTS 0.6B Base cloning model (~1.8 GB)
-.venv/bin/hf download Qwen/Qwen3-TTS-12Hz-0.6B-Base --local-dir models/0.6B-Base
-
-# Whisper alignment checkpoint for background reference processing (~72 MB)
-.venv/bin/python download_alignment.py
-```
-
-*(Note: Qwen3-TTS 1.7B VoiceDesign (~4.3 GB) automatically downloads to the Hugging Face cache on its first use, or you can pre-fetch it using `.venv/bin/hf download Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign`).*
-
----
+Install FFmpeg separately for Opus, AAC, and tempo changes. The native backend needs a built `audiocpp_server` and GGUF model files; the previous Python model weights are not used by this server. See [the audio.cpp guide](AUDIOCPP.md#run-locally) for native configuration and optional CPU word alignment.
 
 ## Running the Server
 
-Start the server on port 8001:
+From the repository directory, run:
 
 ```bash
-OMP_NUM_THREADS=4 .venv/bin/python server.py --device cuda:0 --port 8001
+./run-local.sh --port 8001
 ```
 
-The default `--host 127.0.0.1` accepts connections only from this machine. To serve trusted devices on your local network, add `--host 0.0.0.0`. This server is not intended to be exposed directly to the public internet; it has no per-user accounts or request quotas.
+Then open **Voice Atelier** at <http://127.0.0.1:8001/>. The launcher starts audio.cpp on port 7862 if needed, then starts the compatibility API on port 8001. It stops only the processes it started when you exit.
 
-* **GPU selection**: Default is `--device cuda:0`. Use `--device cpu` for standard CPU generation.
-* **GPU Kokoro**: Add `--kokoro-device cuda:0` to keep the narrator on GPU in FP32. CPU remains the default. Kokoro loads before Qwen so its resident weights count toward Qwen's VRAM plan.
-* **Keep all models loaded**: Add `--keep-models-loaded` to preload and retain both Qwen models and their CUDA graphs, avoiding reload/capture delays when switching between voice creation and dialogue. Kokoro stays on its configured device. With `--kokoro-device cuda:0` and the default 4096-token cache, all three use roughly **8–9 GiB reserved VRAM** in the benchmarks; the automatic parallel comparison peaked at **8.46 GiB**. Budget roughly **9 GiB with headroom**; a 12 GB GPU is a comfortable target. Other applications and longer/slower audio can require more memory. The adaptive CPU offloading plan still applies; the default remains one resident Qwen model with swapping.
-* **Low-VRAM GPUs (e.g. 4 GB cards)**: Add `--max-seq-len 1024` or `--clone-device cpu`.
-* **6 GB starting configuration**: Use `--kokoro-device cuda:0 --max-seq-len 1024`. The planner can move Qwen's speech decoder and text embedding to CPU when needed. A 5 GiB allocator-cap benchmark on an RTX 5060 Ti passed automatic parallel narration, dialogue, model swaps, and a near-240-character Kokoro chunk, peaking at **4.42 GiB reserved**. This leaves room for driver/display memory within a 6 GiB budget; slower speech or other workloads may need more memory. See [benchmark results](AGENTS.md#automatic-parallel-narration).
-* **Narration only**: Pass `--design-only` to disable NPC cloning while keeping Kokoro available.
-* **Optional API key**: Set `export TTS_API_KEY="your-secret-key"` to require Bearer token authentication if other devices on the network should not have access.
+The supplied local configuration expects the native binary at `../Ming/audio.cpp/build/ming-cuda/bin/audiocpp_server`, with Ming and Qwen on GPU 1 and Kokoro on GPU 0. Edit model paths and devices in `audiocpp-server.local.json` to match your machine. Public model profiles and the native service URL are configured in `backend.json`. Launcher overrides and further details are in [AUDIOCPP.md](AUDIOCPP.md#run-locally); native startup logs are written to `audiocpp-backend.log`.
 
-Narration automatically runs alongside Qwen on its own worker, whether Kokoro uses CPU or GPU. GPU Kokoro owns a separate CUDA stream; both CPU and GPU Kokoro use a private random generator so narration does not change seeded Qwen output. Each backend still queues its own additional requests, and background NPC preparation shares Qwen's queue. Narration pauses during Qwen model loading and graph capture, then resumes alongside inference. This works with swapping or `--keep-models-loaded` and requires no parallel-mode flag. The memory planner automatically reserves 1 GiB of workspace for GPU narration on the same device, in addition to its resident weights. `/health` reports `kokoro_device`, `keep_models_loaded`, and `shared_cuda_worker=false`.
+The default host is `127.0.0.1`. To serve trusted devices on your local network, add `--host 0.0.0.0`. Set `TTS_API_KEY` to require bearer authentication.
 
-For ample-VRAM GPUs, keep all three models resident on GPU:
+If audio.cpp is already running separately at the URL configured in `backend.json`, start just the API with:
 
 ```bash
-OMP_NUM_THREADS=4 .venv/bin/python server.py --device cuda:0 --kokoro-device cuda:0 --keep-models-loaded
+.venv/bin/python server.py --config backend.json --port 8001
 ```
 
-Resident mode removes model-switch loading and graph-capture overhead. Qwen requests remain serial while narration runs alongside them. Startup takes longer because both Qwen models initialize before the server accepts requests. With `--design-only`, the flag retains only VoiceDesign because Base is disabled.
+GPU selection, model residency, and native threads are configured in the audio.cpp JSON file. The old `--device`, `--kokoro-device`, `--keep-models-loaded`, and `--max-seq-len` server flags are no longer supported.
+
+## Historical Python Runtime Benchmarks
+
+The following benchmarks use the previous Python synthesis helpers and require their legacy dependencies; they do not benchmark the current audio.cpp server.
 
 To benchmark the same paragraph, first-chunk latency, simultaneous streamed narration/dialogue, and model swaps on your hardware (requires a ready saved NPC):
 
@@ -252,7 +231,17 @@ For short Kokoro narration fragments, optional `context_before` and
 only `input`. The combined text must fit within 240 characters; streaming is
 unsupported for contextual requests. Native token timings validate the cut;
 unsafe extraction falls back to standalone synthesis. `X-Narration-Context`
-reports `applied` or `fallback`.
+reports `applied` or `fallback`. The audiobook example selects context
+automatically and records its use in `narration_context.json`.
+
+---
+
+## Audiobook Example
+
+The [audiobook prototype](examples/audiobook/README.md) uses a local llama-server
+to cast characters and attribute dialogue in *Beyond Lies the Wub*, then renders
+an editable manifest with Kokoro narration and cloned Qwen character voices.
+It supports a single-scene trial, full-story rendering, and reusable audio caches.
 
 ---
 
