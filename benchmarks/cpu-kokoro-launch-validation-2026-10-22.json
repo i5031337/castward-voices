@@ -1,0 +1,101 @@
+{
+  "mode": "./run-local.sh --kokoro-cpu --gpu-device 1 --port 18002",
+  "native_ports": {
+    "gpu": 17864,
+    "cpu": 17865
+  },
+  "checks": [
+    {
+      "reader_stream": false,
+      "elapsed": 7.591744344004837,
+      "first_pcm_seconds": null,
+      "audio_seconds": 13.525
+    },
+    {
+      "model": "npc",
+      "mode": "design",
+      "elapsed": 4.8202864660052,
+      "loaded_gpu_models": [
+        "ming"
+      ],
+      "audio_seconds": 12.8
+    },
+    {
+      "reader_stream": true,
+      "elapsed": 7.3121678110037465,
+      "first_pcm_seconds": 2.8928269789976184,
+      "audio_seconds": 14.475
+    },
+    {
+      "model": "npc",
+      "mode": "clone",
+      "elapsed": 3.2583660349991987,
+      "loaded_gpu_models": [
+        "ming"
+      ],
+      "audio_seconds": 11.7
+    },
+    {
+      "reader_stream": true,
+      "elapsed": 5.185171819997777,
+      "first_pcm_seconds": 0.7363942349984427,
+      "audio_seconds": 14.475
+    },
+    {
+      "model": "qwen3-tts",
+      "mode": "design",
+      "elapsed": 4.985488855003496,
+      "loaded_gpu_models": [
+        "qwen-design-1.7b"
+      ],
+      "audio_seconds": 15.6
+    },
+    {
+      "reader_stream": true,
+      "elapsed": 5.278435402004106,
+      "first_pcm_seconds": 0.7156858240050497,
+      "audio_seconds": 14.475
+    },
+    {
+      "model": "qwen3-tts",
+      "mode": "clone",
+      "elapsed": 4.607456575999095,
+      "loaded_gpu_models": [
+        "qwen-base-0.6b"
+      ],
+      "audio_seconds": 14.24
+    },
+    {
+      "reader_stream": true,
+      "elapsed": 5.273543477000203,
+      "first_pcm_seconds": 0.7275725929939654,
+      "audio_seconds": 14.475
+    },
+    {
+      "model": "qwen3-tts-1.7b",
+      "mode": "clone",
+      "elapsed": 5.438562057999661,
+      "loaded_gpu_models": [
+        "qwen-base-1.7b"
+      ],
+      "audio_seconds": 13.36
+    },
+    {
+      "reader_stream": true,
+      "elapsed": 5.359221421000257,
+      "first_pcm_seconds": 0.7343330000003334,
+      "audio_seconds": 14.475
+    }
+  ],
+  "peak_process_gpu_gib": {
+    "gpu": 4.05078125,
+    "cpu": 0.0
+  },
+  "notes": [
+    "Live CPU narration overlapped each GPU design/clone request through the compatibility API.",
+    "GPU native config max_loaded_models=1; each request verified exactly one loaded GPU model.",
+    "Tested on RTX 5060 Ti, not physical 4/6 GB cards. Existing server GPU model was evicted before the passing run to provide sufficient free memory.",
+    "CPU Kokoro kept both offline and streaming entries in host memory; streaming budget 80 characters."
+  ],
+  "cleanup_verified": true
+}

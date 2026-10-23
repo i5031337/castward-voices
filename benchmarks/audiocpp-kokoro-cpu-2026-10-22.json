@@ -1,0 +1,193 @@
+{
+  "threads": 4,
+  "backend": "cpu",
+  "voice": "af_heart",
+  "seed": 1895,
+  "texts": {
+    "short": "Welcome back. Your next adventure is waiting just around the corner.",
+    "long": "Beyond the quiet village, a narrow path climbed through the forest toward the hills. We followed it slowly, listening to the birds and watching the sunlight move between the trees. By noon, we could see the ocean in the distance."
+  },
+  "records": [
+    {
+      "length": "short",
+      "trial": 0,
+      "warmup": true,
+      "client_seconds": 3.8577235890043085,
+      "native_seconds": 1.616389349,
+      "audio_seconds": 4.5,
+      "rtf": 0.35919763311111114
+    },
+    {
+      "length": "short",
+      "trial": 1,
+      "warmup": false,
+      "client_seconds": 1.671032648999244,
+      "native_seconds": 1.6685352230000001,
+      "audio_seconds": 4.5,
+      "rtf": 0.37078560511111114
+    },
+    {
+      "length": "short",
+      "trial": 2,
+      "warmup": false,
+      "client_seconds": 1.566754072002368,
+      "native_seconds": 1.5640399749999998,
+      "audio_seconds": 4.5,
+      "rtf": 0.3475644388888888
+    },
+    {
+      "length": "short",
+      "trial": 3,
+      "warmup": false,
+      "client_seconds": 1.5372869819984771,
+      "native_seconds": 1.5348404370000002,
+      "audio_seconds": 4.5,
+      "rtf": 0.34107565266666673
+    },
+    {
+      "length": "long",
+      "trial": 0,
+      "warmup": true,
+      "client_seconds": 5.341168043996731,
+      "native_seconds": 5.334637389,
+      "audio_seconds": 13.525,
+      "rtf": 0.39442790306839187
+    },
+    {
+      "length": "long",
+      "trial": 1,
+      "warmup": false,
+      "client_seconds": 5.034546276998299,
+      "native_seconds": 5.030144317,
+      "audio_seconds": 13.525,
+      "rtf": 0.3719145520887246
+    },
+    {
+      "length": "long",
+      "trial": 2,
+      "warmup": false,
+      "client_seconds": 4.888744392002991,
+      "native_seconds": 4.883615730000001,
+      "audio_seconds": 13.525,
+      "rtf": 0.3610806454713494
+    },
+    {
+      "length": "long",
+      "trial": 3,
+      "warmup": false,
+      "client_seconds": 4.8764948429961805,
+      "native_seconds": 4.871733411,
+      "audio_seconds": 13.525,
+      "rtf": 0.3602021006284658
+    },
+    {
+      "length": "long",
+      "stream": true,
+      "trial": 0,
+      "warmup": true,
+      "first_pcm_seconds": 7.526892081994447,
+      "client_seconds": 7.527030201999878,
+      "audio_seconds": 13.525,
+      "text_chunk_size": 240
+    },
+    {
+      "length": "long",
+      "stream": true,
+      "trial": 1,
+      "warmup": false,
+      "first_pcm_seconds": 4.914141111999925,
+      "client_seconds": 4.914269303000765,
+      "audio_seconds": 13.525,
+      "text_chunk_size": 240
+    },
+    {
+      "length": "long",
+      "stream": true,
+      "trial": 2,
+      "warmup": false,
+      "first_pcm_seconds": 4.852313306000724,
+      "client_seconds": 4.852448556004674,
+      "audio_seconds": 13.525,
+      "text_chunk_size": 240
+    },
+    {
+      "length": "long",
+      "stream": true,
+      "trial": 3,
+      "warmup": false,
+      "first_pcm_seconds": 4.859420132001105,
+      "client_seconds": 4.859544913000718,
+      "audio_seconds": 13.525,
+      "text_chunk_size": 240
+    },
+    {
+      "length": "long",
+      "stream": true,
+      "text_chunk_size": 80,
+      "trial": 0,
+      "warmup": true,
+      "first_pcm_seconds": 0.7888691590051167,
+      "client_seconds": 5.147752765005862,
+      "audio_seconds": 14.475
+    },
+    {
+      "length": "long",
+      "stream": true,
+      "text_chunk_size": 80,
+      "trial": 1,
+      "warmup": false,
+      "first_pcm_seconds": 0.6857700949985883,
+      "client_seconds": 5.1244389610001235,
+      "audio_seconds": 14.475
+    },
+    {
+      "length": "long",
+      "stream": true,
+      "text_chunk_size": 80,
+      "trial": 2,
+      "warmup": false,
+      "first_pcm_seconds": 0.68369869000162,
+      "client_seconds": 5.044392689997039,
+      "audio_seconds": 14.475
+    },
+    {
+      "length": "long",
+      "stream": true,
+      "text_chunk_size": 80,
+      "trial": 3,
+      "warmup": false,
+      "first_pcm_seconds": 0.6767455739973229,
+      "client_seconds": 5.005915980000282,
+      "audio_seconds": 14.475
+    }
+  ],
+  "summary": [
+    {
+      "length": "short",
+      "native_seconds": 1.5640399749999998,
+      "client_seconds": 1.566754072002368,
+      "audio_seconds": 4.5,
+      "rtf": 0.3475644388888888
+    },
+    {
+      "length": "long",
+      "native_seconds": 4.883615730000001,
+      "client_seconds": 4.888744392002991,
+      "audio_seconds": 13.525,
+      "rtf": 0.3610806454713494
+    }
+  ],
+  "median_first_pcm_seconds": 4.859420132001105,
+  "notes": [
+    "Same Q8 Kokoro file as CUDA; isolated CPU server, max_loaded_models=1.",
+    "Each workload uses one warmup and three measured requests. Streaming consumes the entire long passage.",
+    "First PCM is first decoded native SSE audio payload at client.",
+    "Whisper validation had completed before this benchmark.",
+    "240-character streaming budget delivers this entire paragraph in one audio event; 80-character budget delivers multiple events.",
+    "This isolated CPU measurement predates the --kokoro-cpu launch flag; the launcher now supplies separate native processes and model-ID routing."
+  ],
+  "median_first_pcm_80_seconds": 0.68369869000162,
+  "created_utc": "2026-10-23T01:19:57Z",
+  "cpu": "AMD Ryzen 7 5800X3D",
+  "native_source_revision": "bd7032cba3a83144de4480456f7f1e5e7e2dccd9"
+}

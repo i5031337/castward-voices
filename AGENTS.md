@@ -1,10 +1,14 @@
 > **Current server: audio.cpp.** All synthesis now runs through the native backend. See [AUDIOCPP.md](AUDIOCPP.md) for startup, configuration, and the current architecture. The architecture, commands, and measurements below describe the previous Python runtime; its helpers remain available for historical experiments.
 
-The current server includes **Voice Atelier**, a local web UI at `/` for model-specific voice design, cloning, and preset synthesis. See [the web UI guide](AUDIOCPP.md#voice-atelier-web-ui).
+The current server includes **Castward Voice Studio**, a local web UI at `/` for model-specific voice design, cloning, and preset synthesis. See [the web UI guide](AUDIOCPP.md#castward-voice-studio-web-ui).
+
+For current performance, use the [audio.cpp Q8 measurements](AUDIOCPP.md#native-qwen-speed-and-memory-2026-10-22): 0.6B Base cloning measured RTF 0.15–0.16 and 1.7B Base RTF 0.19–0.20 on RTX 5060 Ti. Short/long output process VRAM on the Qwen GPU was 2.21/3.20 GiB (0.6B Base), 3.07/3.96 GiB (1.7B Base), and 2.59/3.77 GiB (VoiceDesign). Resident pairs and loading have additional costs. Do not apply the Python runtime's VRAM planner, allocator caps, or timing tables below to the native server.
+
+The [matched Ming comparison](AUDIOCPP.md#native-ming-comparison-and-server-vram-budget-2026-10-22) measured RTF 0.25–0.27 and 1.48–2.08 GiB synthesis-GPU memory. Full-paragraph GPU Kokoro narration can add 2.73 GiB; concurrent Ming/Kokoro reached 4.81 GiB across two GPUs. Recommend 6 GiB available for a shared-GPU default workflow, 8 GiB for Qwen + GPU Kokoro, and 9 GiB for a resident VoiceDesign/1.7B Base pair, with the documented workload limits. Native CPU Kokoro measured RTF 0.36 on four Ryzen 5800X3D threads. `./run-local.sh --kokoro-cpu` now routes Kokoro to a separate CPU process and limits CUDA to one resident model on GPU 0 (`--gpu-device` selects another). Budget 3 GiB available for Ming or 5 GiB for Qwen in this mode; source configurations remain unchanged. Generic native-ID `backend_routes` cover inference, streaming, voices, and merged discovery.
 
 # System Architecture & Technical Specifications (AGENTS.md)
 
-This document provides technical reference for developers, maintainers, and AI coding agents working on the `qwen3-tts` engine.
+This document provides technical reference for developers, maintainers, and AI coding agents working on Castward Voices (repository directory: `qwen3-tts`).
 
 ---
 

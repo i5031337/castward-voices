@@ -1,4 +1,4 @@
-"""OpenAI-compatible speech facade backed entirely by audio.cpp."""
+"""Castward Voices: an OpenAI-compatible speech facade powered by audio.cpp."""
 import argparse
 import asyncio
 import io
@@ -133,7 +133,7 @@ def create_app(*, config=None, config_path=None, backend=None, voices_dir="voice
                 if owns_backend:
                     app.state.backend.close()
 
-    app = FastAPI(title="Local Speech", lifespan=lifespan)
+    app = FastAPI(title="Castward Voices", description="Persistent character voices and narration for Castward, with Castward Voice Studio.", lifespan=lifespan)
 
     async def authenticate(request: Request):
         if api_key and not secrets.compare_digest(request.headers.get("authorization", "").encode(), f"Bearer {api_key}".encode()):
@@ -156,6 +156,7 @@ def create_app(*, config=None, config_path=None, backend=None, voices_dir="voice
     @app.get("/health")
     async def health():
         return {"status": "ok", "backend": "audio.cpp", "backend_url": settings.backend_url,
+                "backend_routes": settings.backend_routes,
                 "output_sample_rate": settings.output_sample_rate}
 
     @app.get("/v1/models", dependencies=[Depends(authenticate)])

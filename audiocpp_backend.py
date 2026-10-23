@@ -21,11 +21,22 @@ class AudioCppBackend:
                 headers["Authorization"] = f"Bearer {key}"
         self.client = httpx.Client(base_url=config.backend_url.rstrip("/"), timeout=config.backend_timeout,
                                    headers=headers, transport=transport)
+        self._clients = {config.backend_url.rstrip("/"): self.client}
+        for url in config.backend_routes.values():
+            url = url.rstrip("/")
+            if url not in self._clients:
+                self._clients[url] = httpx.Client(base_url=url, timeout=config.backend_timeout,
+                                                 headers=headers, transport=transport)
         self._locks = {}
         self._locks_guard = threading.Lock()
 
     def close(self):
-        self.client.close()
+        for client in self._clients.values():
+            client.close()
+
+    def _client_for(self, model):
+        url = self.config.backend_routes.get(model, self.config.backend_url).rstrip("/")
+        return self._clients[url]
 
     def _lock(self, model):
         with self._locks_guard:
@@ -46,12 +57,18 @@ class AudioCppBackend:
         raise RuntimeError(f"audio.cpp returned HTTP {response.status_code}: {message}")
 
     def discover(self):
-        response = self.client.get("/v1/models", params={"include_params": "true"})
-        self._check(response)
-        return response.json().get("data", [])
+        entries = []
+        for url, client in self._clients.items():
+            response = client.get("/v1/models", params={"include_params": "true"})
+            self._check(response)
+            for entry in response.json().get("data", []):
+                target = self.config.backend_routes.get(entry["id"], self.config.backend_url).rstrip("/")
+                if target == url:
+                    entries.append(entry)
+        return entries
 
     def voices(self, profile):
-        response = self.client.get("/v1/audio/voices", params={"model": profile.backend_model})
+        response = self._client_for(profile.backend_model).get("/v1/audio/voices", params={"model": profile.backend_model})
         self._check(response)
         return response.json().get("voices", [])
 
@@ -110,7 +127,7 @@ class AudioCppBackend:
     def generate(self, profile, body, **kwargs):
         request = self.payload(profile, body, **kwargs)
         with self._lock(request["model"]):
-            response = self.client.post("/v1/audio/speech", json=request)
+            response = self._client_for(request["model"]).post("/v1/audio/speech", json=request)
             self._check(response)
             audio, rate = sf.read(io.BytesIO(response.content), dtype="float32")
         return mono_audio(audio, rate), rate
@@ -120,7 +137,7 @@ class AudioCppBackend:
             raise ValueError("This streaming profile does not support speed changes")
         request = self.payload(profile, body, mode="stream")
         request.update(response_format="pcm", stream_format="sse", speed=body.speed)
-        with self._lock(request["model"]), self.client.stream("POST", "/v1/audio/speech", json=request) as response:
+        with self._lock(request["model"]), self._client_for(request["model"]).stream("POST", "/v1/audio/speech", json=request) as response:
             if not response.is_success:
                 response.read()
                 self._check(response)

@@ -66,6 +66,7 @@ class ModelProfile(BaseModel):
 class ServerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     backend_url: str = "http://127.0.0.1:7861"
+    backend_routes: dict[str, str] = Field(default_factory=dict)
     backend_timeout: float = Field(default=180, gt=0)
     backend_api_key_env: str | None = None
     output_sample_rate: int = Field(default=24000, gt=0)

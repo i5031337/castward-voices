@@ -10,3 +10,5 @@ __pycache__/
 # Local audio.cpp runtime
 .cache/
 audiocpp-backend.log
+audiocpp-backend-cpu.log
+audiocpp-backend-cpu-mode-gpu.log

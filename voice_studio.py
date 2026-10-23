@@ -2,8 +2,10 @@
 import asyncio
 import base64
 import binascii
+import hashlib
 import io
 import logging
+import re
 import shutil
 import time
 from pathlib import Path
@@ -12,7 +14,7 @@ from typing import Literal
 import numpy as np
 import soundfile as sf
 from fastapi import Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from audio_utils import mono_audio, resample
@@ -51,7 +53,12 @@ def register_studio(app, settings, authenticate, SpeechRequest, encode_audio):
 
     @app.get("/", include_in_schema=False)
     async def studio_page():
-        return FileResponse(assets / "index.html", headers={"Cache-Control": "no-cache"})
+        html = (assets / "index.html").read_text()
+        for name in ("studio.css", "studio.js"):
+            version = hashlib.sha256((assets / name).read_bytes()).hexdigest()[:16]
+            url = f"/studio-assets/{name}"
+            html = re.sub(re.escape(url) + r'(?:\?v=[^"\s]*)?', f"{url}?v={version}", html)
+        return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
     @app.get("/ui/config", dependencies=[Depends(authenticate)])
     async def studio_config():

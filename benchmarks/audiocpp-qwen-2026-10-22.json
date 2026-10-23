@@ -1,0 +1,182 @@
+{
+  "created_utc": "2026-10-23T01:02:41Z",
+  "native_source_revision": "bd7032cba3a83144de4480456f7f1e5e7e2dccd9",
+  "gpu_info": "index, uuid, name, memory.total [MiB], driver_version\n0, GPU-e42c4cce-6ad9-6325-a24b-768d465f6499, NVIDIA GeForce RTX 5060 Ti, 16311 MiB, 595.91.07\n1, GPU-9850674b-0c97-f3f6-52c4-1aad9c50856b, NVIDIA GeForce RTX 5060 Ti, 16311 MiB, 595.91.07\n",
+  "checkpoint_gib": {
+    "qwen-design-1.7b": 2.6235357522964478,
+    "qwen-base-0.6b": 1.8544660210609436,
+    "qwen-base-1.7b": 2.510087788105011,
+    "qwen-custom-1.7b": 2.6235871016979218
+  },
+  "repeats": 3,
+  "texts": {
+    "short": "Welcome back. Your next adventure is waiting just around the corner.",
+    "long": "Beyond the quiet village, a narrow path climbed through the forest toward the hills. We followed it slowly, listening to the birds and watching the sunlight move between the trees. By noon, we could see the ocean in the distance."
+  },
+  "reference_text": "The morning light spilled across the garden. Shall we take a walk before the rain arrives?",
+  "style": "A warm, clear female voice with a neutral American accent and a natural conversational pace.",
+  "options": {
+    "language": "en",
+    "max_tokens": 512
+  },
+  "notes": [
+    "Native Q8 checkpoints; default sampling with seed 1895.",
+    "Cold means first request after LRU eviction, not a fresh process or cold OS file cache.",
+    "Warm medians exclude the cold request and an additional short warmup.",
+    "Each clone request includes the same WAV and exact transcript; includes native reference processing.",
+    "Native wall timing excludes model loading; client timing includes loading, HTTP and WAV transfer.",
+    "Process VRAM sampled approximately every 100 ms plus nvidia-smi overhead; brief peaks may be missed.",
+    "Memory includes CUDA context and all resident native entries; GPU UUIDs distinguish devices."
+  ],
+  "summary": [
+    {
+      "model": "qwen-design-1.7b",
+      "length": "short",
+      "client_seconds": 0.7015189349986031,
+      "native_seconds": 0.699779763,
+      "audio_seconds": 3.92,
+      "native_rtf": 0.17851524566326532,
+      "client_rtf": 0.17895891198943956
+    },
+    {
+      "model": "qwen-design-1.7b",
+      "length": "long",
+      "client_seconds": 2.992512087999785,
+      "native_seconds": 2.988354711,
+      "audio_seconds": 15.6,
+      "native_rtf": 0.19156119942307692,
+      "client_rtf": 0.19182769794870416
+    },
+    {
+      "model": "qwen-base-0.6b",
+      "length": "short",
+      "client_seconds": 0.6416359710055985,
+      "native_seconds": 0.6367145470000001,
+      "audio_seconds": 4.0,
+      "native_rtf": 0.15917863675000002,
+      "client_rtf": 0.16040899275139964
+    },
+    {
+      "model": "qwen-base-0.6b",
+      "length": "long",
+      "client_seconds": 2.197936435994052,
+      "native_seconds": 2.190904978,
+      "audio_seconds": 14.24,
+      "native_rtf": 0.15385568665730337,
+      "client_rtf": 0.15434946881980702
+    },
+    {
+      "model": "qwen-base-1.7b",
+      "length": "short",
+      "client_seconds": 0.8184983539977111,
+      "native_seconds": 0.813811753,
+      "audio_seconds": 4.16,
+      "native_rtf": 0.1956278252403846,
+      "client_rtf": 0.19675441201868055
+    },
+    {
+      "model": "qwen-base-1.7b",
+      "length": "long",
+      "client_seconds": 2.5365010500026983,
+      "native_seconds": 2.528683868,
+      "audio_seconds": 13.36,
+      "native_rtf": 0.18927274461077845,
+      "client_rtf": 0.18985786302415408
+    }
+  ],
+  "single_model_memory_gib": {
+    "qwen-design-1.7b": {
+      "short": 2.5859375,
+      "long": 3.767578125
+    },
+    "qwen-base-0.6b": {
+      "short": 2.208984375,
+      "long": 3.203125
+    },
+    "qwen-base-1.7b": {
+      "short": 3.06640625,
+      "long": 3.96484375
+    }
+  },
+  "cold_requests": [
+    {
+      "model": "qwen-design-1.7b",
+      "client_seconds": 2.418623724995996,
+      "native_seconds": 0.9771142549999999,
+      "audio_seconds": 3.92
+    },
+    {
+      "model": "qwen-base-0.6b",
+      "client_seconds": 2.662360759997682,
+      "native_seconds": 1.4574879269999998,
+      "audio_seconds": 4.0
+    },
+    {
+      "model": "qwen-base-1.7b",
+      "client_seconds": 4.024484084002324,
+      "native_seconds": 1.7820543290000002,
+      "audio_seconds": 4.16
+    }
+  ],
+  "pair_requests": [
+    {
+      "model": "qwen-design-1.7b",
+      "phase": "pair_load",
+      "client_seconds": 2.3498381809986313,
+      "audio_seconds": 3.92,
+      "peak_gpu_mib": {
+        "GPU-e42c4cce-6ad9-6325-a24b-768d465f6499": 164,
+        "GPU-9850674b-0c97-f3f6-52c4-1aad9c50856b": 6516
+      },
+      "last_gpu_mib": {
+        "GPU-e42c4cce-6ad9-6325-a24b-768d465f6499": 164,
+        "GPU-9850674b-0c97-f3f6-52c4-1aad9c50856b": 6516
+      }
+    },
+    {
+      "model": "qwen-base-0.6b",
+      "phase": "pair",
+      "client_seconds": 2.772216181998374,
+      "audio_seconds": 4.0,
+      "peak_gpu_mib": {
+        "GPU-e42c4cce-6ad9-6325-a24b-768d465f6499": 164,
+        "GPU-9850674b-0c97-f3f6-52c4-1aad9c50856b": 4718
+      },
+      "last_gpu_mib": {
+        "GPU-e42c4cce-6ad9-6325-a24b-768d465f6499": 164,
+        "GPU-9850674b-0c97-f3f6-52c4-1aad9c50856b": 4718
+      }
+    },
+    {
+      "model": "qwen-design-1.7b",
+      "phase": "pair_load",
+      "client_seconds": 0.7078119170037098,
+      "audio_seconds": 3.92,
+      "peak_gpu_mib": {
+        "GPU-e42c4cce-6ad9-6325-a24b-768d465f6499": 164,
+        "GPU-9850674b-0c97-f3f6-52c4-1aad9c50856b": 4718
+      },
+      "last_gpu_mib": {
+        "GPU-e42c4cce-6ad9-6325-a24b-768d465f6499": 164,
+        "GPU-9850674b-0c97-f3f6-52c4-1aad9c50856b": 4718
+      }
+    },
+    {
+      "model": "qwen-base-1.7b",
+      "phase": "pair",
+      "client_seconds": 3.2116186970015406,
+      "audio_seconds": 4.16,
+      "peak_gpu_mib": {
+        "GPU-e42c4cce-6ad9-6325-a24b-768d465f6499": 164,
+        "GPU-9850674b-0c97-f3f6-52c4-1aad9c50856b": 5596
+      },
+      "last_gpu_mib": {
+        "GPU-e42c4cce-6ad9-6325-a24b-768d465f6499": 164,
+        "GPU-9850674b-0c97-f3f6-52c4-1aad9c50856b": 5596
+      }
+    }
+  ],
+  "memory_scope": "Server process allocation on GPU 1 including CUDA context; another Kokoro entry remains on GPU 0 in single-Qwen scenarios. Other processes/display excluded. Approximately 100-ms sampling plus query overhead; brief peaks may be missed.",
+  "raw_local_results": "out/bench/audiocpp_qwen.json",
+  "reference_sha256": "11363ee88ad40012d364e250fea4e6f7d88edd2e789fcf7a8eda900048a31b23"
+}

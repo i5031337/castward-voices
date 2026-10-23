@@ -1,0 +1,208 @@
+{
+  "created_utc": "2026-10-23T01:10:49Z",
+  "native_source_revision": "bd7032cba3a83144de4480456f7f1e5e7e2dccd9",
+  "gpu_info": "index, uuid, name, memory.total [MiB], driver_version\n0, GPU-e42c4cce-6ad9-6325-a24b-768d465f6499, NVIDIA GeForce RTX 5060 Ti, 16311 MiB, 595.91.07\n1, GPU-9850674b-0c97-f3f6-52c4-1aad9c50856b, NVIDIA GeForce RTX 5060 Ti, 16311 MiB, 595.91.07\n",
+  "repeats": 3,
+  "texts": {
+    "short": "Welcome back. Your next adventure is waiting just around the corner.",
+    "long": "Beyond the quiet village, a narrow path climbed through the forest toward the hills. We followed it slowly, listening to the birds and watching the sunlight move between the trees. By noon, we could see the ocean in the distance."
+  },
+  "reference_text": "The morning light spilled across the garden. Shall we take a walk before the rain arrives?",
+  "reference_sha256": "11363ee88ad40012d364e250fea4e6f7d88edd2e789fcf7a8eda900048a31b23",
+  "style": "A warm, clear female voice with a neutral American accent and a natural conversational pace.",
+  "options": {
+    "language": "en",
+    "max_tokens": 512
+  },
+  "notes": [
+    "Native Q8 checkpoints; default sampling with seed 1895.",
+    "Cold means first request after LRU eviction, not a fresh process or cold OS file cache.",
+    "Warm medians exclude the cold request and an additional short warmup.",
+    "Each clone request includes the same WAV and exact transcript; includes native reference processing.",
+    "Native wall timing excludes model loading; client timing includes loading, HTTP and WAV transfer.",
+    "Process VRAM sampled approximately every 100 ms plus nvidia-smi overhead; brief peaks may be missed.",
+    "Memory includes CUDA context and all resident native entries; GPU UUIDs distinguish devices."
+  ],
+  "summary": [
+    {
+      "model": "ming",
+      "task": "design",
+      "length": "short",
+      "client_seconds": 0.9094961150040035,
+      "native_seconds": 0.9070710000000001,
+      "audio_seconds": 3.5,
+      "native_rtf": 0.25916314285714287,
+      "client_rtf": 0.25985603285828673
+    },
+    {
+      "model": "ming",
+      "task": "design",
+      "length": "long",
+      "client_seconds": 3.284755945998768,
+      "native_seconds": 3.278332094,
+      "audio_seconds": 12.8,
+      "native_rtf": 0.25611969484374997,
+      "client_rtf": 0.25662155828115374
+    },
+    {
+      "model": "ming",
+      "task": "clone",
+      "length": "short",
+      "client_seconds": 0.9588132360004238,
+      "native_seconds": 0.953297196,
+      "audio_seconds": 3.5,
+      "native_rtf": 0.27237062742857143,
+      "client_rtf": 0.27394663885726395
+    },
+    {
+      "model": "ming",
+      "task": "clone",
+      "length": "long",
+      "client_seconds": 2.9538439030002337,
+      "native_seconds": 2.945533937,
+      "audio_seconds": 11.6,
+      "native_rtf": 0.2539253393965517,
+      "client_rtf": 0.25464171577588224
+    }
+  ],
+  "checkpoint_gib": {
+    "ming": 1.6226255297660828
+  },
+  "template_options": {
+    "design": {
+      "template_name": "voice_design",
+      "instruct": "A warm, clear female voice with a neutral American accent and a natural conversational pace."
+    },
+    "clone": {
+      "template_name": "tts",
+      "reference_text": "The morning light spilled across the garden. Shall we take a walk before the rain arrives?"
+    }
+  },
+  "single_model_memory_gib": {
+    "design": {
+      "short": 1.48046875,
+      "long": 1.51953125
+    },
+    "clone": {
+      "short": 2.046875,
+      "long": 2.080078125
+    }
+  },
+  "cold_requests": [
+    {
+      "model": "ming",
+      "task": "design",
+      "client_seconds": 2.026576334996207,
+      "native_seconds": 0.92831717,
+      "audio_seconds": 3.5
+    },
+    {
+      "model": "ming",
+      "task": "clone",
+      "client_seconds": 2.0920903259975603,
+      "native_seconds": 1.17642655,
+      "audio_seconds": 3.6
+    }
+  ],
+  "output_sample_rate": 44100,
+  "transcripts": {
+    "audiocpp_ming-ming-clone-long.wav": " Beyond the quiet village, a narrow path climbed through the forest toward the hills. We followed it slowly, listening to the birds and watching the sunlight move between the trees. By noon we could see the ocean in the distance.",
+    "audiocpp_ming-ming-clone-short.wav": " Welcome back. Your next adventure is waiting just around the corner.",
+    "audiocpp_ming-ming-design-long.wav": " Beyond the quiet village, a narrow path climbed through the forest toward the hills. We followed it slowly, listening to the birds and watching the sunlight move between the trees. By noon, we could see the ocean in the distance.",
+    "audiocpp_ming-ming-design-short.wav": " Welcome back. Your next adventure is waiting just around the corner."
+  },
+  "narration_memory_check": {
+    "records": [
+      {
+        "phase": "narration",
+        "runs": [
+          {
+            "model": "kokoro-stream",
+            "task": "preset",
+            "native_seconds": 0.5022008099999999,
+            "audio_seconds": 13.525
+          }
+        ],
+        "peak_gpu_mib": {
+          "GPU-9850674b-0c97-f3f6-52c4-1aad9c50856b": 2130,
+          "GPU-e42c4cce-6ad9-6325-a24b-768d465f6499": 2690
+        },
+        "last_gpu_mib": {
+          "GPU-e42c4cce-6ad9-6325-a24b-768d465f6499": 2690,
+          "GPU-9850674b-0c97-f3f6-52c4-1aad9c50856b": 2130
+        }
+      },
+      {
+        "phase": "design",
+        "runs": [
+          {
+            "model": "ming",
+            "task": "design",
+            "native_seconds": 3.2879607500000003,
+            "audio_seconds": 12.8
+          }
+        ],
+        "peak_gpu_mib": {
+          "GPU-9850674b-0c97-f3f6-52c4-1aad9c50856b": 2138,
+          "GPU-e42c4cce-6ad9-6325-a24b-768d465f6499": 2690
+        },
+        "last_gpu_mib": {
+          "GPU-e42c4cce-6ad9-6325-a24b-768d465f6499": 2690,
+          "GPU-9850674b-0c97-f3f6-52c4-1aad9c50856b": 2138
+        }
+      },
+      {
+        "phase": "clone",
+        "runs": [
+          {
+            "model": "ming",
+            "task": "clone",
+            "native_seconds": 2.932263697,
+            "audio_seconds": 11.6
+          }
+        ],
+        "peak_gpu_mib": {
+          "GPU-9850674b-0c97-f3f6-52c4-1aad9c50856b": 2138,
+          "GPU-e42c4cce-6ad9-6325-a24b-768d465f6499": 2690
+        },
+        "last_gpu_mib": {
+          "GPU-e42c4cce-6ad9-6325-a24b-768d465f6499": 2690,
+          "GPU-9850674b-0c97-f3f6-52c4-1aad9c50856b": 2132
+        }
+      },
+      {
+        "phase": "concurrent",
+        "runs": [
+          {
+            "model": "ming",
+            "task": "clone",
+            "native_seconds": 2.959543132,
+            "audio_seconds": 11.6
+          },
+          {
+            "model": "kokoro-stream",
+            "task": "preset",
+            "native_seconds": 0.490553582,
+            "audio_seconds": 13.525
+          }
+        ],
+        "peak_gpu_mib": {
+          "GPU-9850674b-0c97-f3f6-52c4-1aad9c50856b": 2132,
+          "GPU-e42c4cce-6ad9-6325-a24b-768d465f6499": 2794
+        },
+        "last_gpu_mib": {
+          "GPU-e42c4cce-6ad9-6325-a24b-768d465f6499": 2794,
+          "GPU-9850674b-0c97-f3f6-52c4-1aad9c50856b": 2132
+        }
+      }
+    ],
+    "peak_combined_process_gib": 4.810546875,
+    "note": "Current two-GPU placement. Concurrent request is a memory check, not a repeated timing benchmark."
+  },
+  "memory_scope": "Process allocation on synthesis GPU 1, including CUDA context; Kokoro is on GPU 0. Narration check explicitly reports both devices. Approximately 100-ms sampling plus query overhead; brief peaks may be missed.",
+  "raw_local_results": [
+    "out/bench/audiocpp_ming.json",
+    "out/bench/audiocpp_ming_narration_memory.json",
+    "out/bench/audiocpp_ming_transcripts.json"
+  ]
+}

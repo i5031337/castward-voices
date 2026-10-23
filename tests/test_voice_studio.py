@@ -1,8 +1,10 @@
 import base64
 import io
 import json
+import re
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import numpy as np
@@ -32,6 +34,22 @@ class NativeBackend:
 
 
 class StudioTests(unittest.TestCase):
+    def test_asset_url_changes_when_stylesheet_changes(self):
+        page = self.client.get('/')
+        self.assertEqual(page.headers['cache-control'], 'no-cache')
+        asset_urls = lambda html: re.findall(r'/studio-assets/studio\.(?:css|js)\?v=[a-f0-9]+', html)
+        before = asset_urls(page.text)
+        self.assertEqual(len(before), 2)
+        read_bytes = Path.read_bytes
+        def changed(path):
+            data = read_bytes(path)
+            return data + b'\n/* updated theme */' if path.name == 'studio.css' else data
+        with patch.object(Path, 'read_bytes', autospec=True, side_effect=changed):
+            after = asset_urls(self.client.get('/').text)
+        self.assertNotEqual(before[0], after[0])
+        self.assertEqual(before[1], after[1])
+        self.assertEqual(self.client.get(before[0]).status_code, 200)
+
     def setUp(self):
         self.storage=tempfile.TemporaryDirectory()
         self.backend=NativeBackend()
@@ -46,7 +64,7 @@ class StudioTests(unittest.TestCase):
         return self.client.post('/ui/generate',headers=self.auth,json={'mode':mode,'speech':speech,**fields})
     def test_page_assets_auth_and_dynamic_model_metadata(self):
         self.assertEqual(self.client.get('/').status_code,200)
-        self.assertIn('Voice Atelier',self.client.get('/').text)
+        self.assertIn('Castward Voice Studio',self.client.get('/').text)
         self.assertEqual(self.client.get('/studio-assets/studio.js').status_code,200)
         self.assertEqual(self.client.get('/ui/config').status_code,401)
         self.assertEqual(self.generate().status_code,200)

@@ -338,14 +338,14 @@ async function drawWaveform(canvas, blob) {
     audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
     const decoded = await audioContext.decodeAudioData(await blob.arrayBuffer());
     const values = decoded.getChannelData(0);
-    context.fillStyle = '#b6c8a0';
+    context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
     for (let x = 0; x < width; x += 5) {
       const start = Math.floor(x / width * values.length); const end = Math.floor((x + 4) / width * values.length);
       let peak = 0; for (let i = start; i < end; i += Math.max(1, Math.floor((end - start) / 80))) peak = Math.max(peak, Math.abs(values[i]));
       const amplitude = Math.max(2, Math.min(height - 10, peak * height));
       context.fillRect(x, (height - amplitude) / 2, 2, amplitude);
     }
-  } catch { context.fillStyle = '#98a593'; context.font = '16px sans-serif'; context.fillText('Use the player to listen to this take.', 30, 65); }
+  } catch { context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--muted').trim(); context.font = '16px sans-serif'; context.fillText('Use the player to listen to this take.', 30, 65); }
 }
 function addTake(take, request) {
   take.index = (state.results.at(-1)?.index || 0) + 1;

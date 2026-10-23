@@ -1,12 +1,60 @@
-> **Current server: audio.cpp.** All synthesis now runs through the native backend. See [AUDIOCPP.md](AUDIOCPP.md) for startup, configuration, and the current architecture. The architecture, commands, and measurements below describe the previous Python runtime; its helpers remain available for historical experiments.
+# Castward Voices
 
-The current server includes **Voice Atelier**, a local web UI at `/` for model-specific voice design, cloning, and preset synthesis. See [the web UI guide](AUDIOCPP.md#voice-atelier-web-ui).
+<p><img src="webui/branding/castward-voices-logo.svg" width="640" alt="Castward Voices"></p>
 
-# Qwen3-TTS Speech Server
+The local voice companion for the **Castward SillyTavern RPG extension**: persistent, designed character voices for short dialogue, with lightweight Kokoro narration for the longer story. **Ming and Qwen** design and clone character voices through audio.cpp, behind an OpenAI-compatible speech API. **Castward Voice Studio**, the web UI at `/`, provides voice design, cloning, and preset synthesis. Ming is the default character backend; Kokoro handles narration.
 
-A local, OpenAI-compatible text-to-speech server built around a **3-model hybrid workflow**. It is intended for one or a few trusted users on a local network. It pairs lightweight CPU narration with GPU-accelerated zero-shot voice design and fast character dialogue cloning, fitting comfortably on GPUs with 4–6 GB VRAM (such as the GTX 1650/1660 Ti and RTX 30/40/50-series).
+```bash
+./run-local.sh --port 8001
+```
 
----
+Open <http://127.0.0.1:8001/>. See [setup, configuration, and Castward Voice Studio](AUDIOCPP.md) for dependencies and model profiles.
+
+**For a 4 GB GPU with Ming, or a 6 GB GPU with Qwen, keep narration on CPU:**
+
+```bash
+./run-local.sh --kokoro-cpu --port 8001
+```
+
+This starts CPU Kokoro and CUDA character synthesis on **GPU 0**, with **one resident GPU model**. Qwen automatically swaps between design and cloning checkpoints. Use `--gpu-device 1` to select another GPU. Budget about **3 GiB available for Ming or 5 GiB for Qwen**, leaving the rest for your desktop; these are workload-based recommendations rather than physical 4/6 GB card benchmarks.
+
+## Current performance: Ming vs Qwen
+
+Measured with **Q8 models on an RTX 5060 Ti**, CUDA, four CPU threads, and three measured runs per task/passage. All cloning tests used the **same 4.72-second reference recording and transcript**. Design used the same voice description. The passages contain 68 and 229 characters; generation settings use native defaults with seed 1895 and `max_tokens=512`.
+
+| Model / task | Short generation | Paragraph generation | RTF, short / paragraph ↓ | VRAM, short → paragraph |
+|---|---:|---:|---:|---:|
+| **Ming 0.5B — design** | 0.91 s | 3.28 s | 0.259 / 0.256 | **1.48 → 1.52 GiB** |
+| **Ming 0.5B — clone** | 0.95 s | 2.95 s | 0.272 / 0.254 | **2.05 → 2.08 GiB** |
+| Qwen 1.7B VoiceDesign | 0.70 s | 2.99 s | 0.179 / 0.192 | 2.59 → 3.77 GiB |
+| Qwen 0.6B Base — clone | **0.64 s** | **2.19 s** | **0.159 / 0.154** | 2.21 → 3.20 GiB |
+| Qwen 1.7B Base — clone | 0.81 s | 2.53 s | 0.196 / 0.189 | 3.07 → 3.96 GiB |
+
+**Ming uses less VRAM and one checkpoint for both design and cloning. Qwen generates audio faster in these tests.** RTF is generation time divided by output audio duration; lower is faster. Outputs vary by model: short lines lasted 3.5–4.2 seconds and paragraphs 11.6–15.6 seconds. These are warm native generation times; cold requests after eviction took about **2 seconds for Ming and 2.4–4 seconds for Qwen**. Quality was not ranked.
+
+VRAM is the native server's sampled process allocation on the synthesis GPU, including context and retained buffers, **excluding Kokoro on the other GPU**. It is not model-file size or total card usage. [Full methodology and results](AUDIOCPP.md#native-ming-comparison-and-server-vram-budget-2026-10-22) include native sample rates, loading overhead, memory scope, and reproduction commands.
+
+## Recommended minimum available VRAM
+
+**Use `--kokoro-cpu` for smaller GPUs: 3 GiB available for Ming or 5 GiB for Qwen.** The default GPU-narration workflow needs 6 GiB available for Ming + Kokoro. “Available” means the budget left for this server after the desktop and other applications, rather than the card's advertised capacity.
+
+| Intended use on one GPU | Recommended available VRAM |
+|---|---:|
+| Ming design/cloning + CPU Kokoro (`--kokoro-cpu`) | **3 GiB** |
+| Qwen design/cloning + CPU Kokoro, one GPU checkpoint resident (`--kokoro-cpu`) | **5 GiB** |
+| Default Ming design/cloning + GPU Kokoro narration | **6 GiB** |
+| One Qwen model + GPU Kokoro narration | **8 GiB** |
+| Qwen VoiceDesign + 1.7B Base cached together | **9 GiB** |
+
+These are planning recommendations with headroom, not tested minimum card sizes. Concurrent Ming cloning and paragraph narration measured **4.81 GiB combined across two GPUs**: 2.08 GiB for Ming and 2.73 GiB for Kokoro. Qwen + Kokoro's 8 GiB recommendation combines separately observed allocations; resident Qwen pairs reached 6.36 GiB with mixed short/long buffers and can grow further. Longer outputs and different workloads can require more.
+
+Without `--kokoro-cpu`, the supplied configuration uses **GPU 1 for Ming/Qwen and GPU 0 for Kokoro**. For that split, budget at least **3 GiB available on GPU 1 for Ming and 4 GiB on GPU 0 for Kokoro**; Qwen needs more on GPU 1. For GPU narration on a single GPU, change every `device` in `audiocpp-server.local.json` to its index. The default two-entry cache counts all models across devices and can evict models as you switch; memory on different cards cannot be pooled for one model. CPU-narration mode instead gives the GPU process a one-entry cache and keeps Kokoro in a separate CPU process.
+
+**Kokoro is usable on CPU.** Audio.cpp Q8 on a Ryzen 5800X3D with four threads generated 13.53 seconds of narration in **4.88 seconds** (RTF **0.36**, about **2.8× faster than playback**), with no GPU synthesis allocation. Streaming with `options: {"text_chunk_size": 80}` delivered first PCM in **0.68 seconds**; the GPU mode's default 240-character budget delivered this whole paragraph on CPU in one event after **4.86 seconds**. These are three-run warm medians. `--kokoro-cpu` supplies the 80-character streaming default unless your profile already sets one. See [CPU measurements and deployment](AUDIOCPP.md#kokoro-on-cpu-2026-10-22).
+
+## Historical Python runtime
+
+The architecture, commands, flags, and measurements below describe the previous Python synthesis runtime. Its helpers remain available for historical experiments; use [AUDIOCPP.md](AUDIOCPP.md) for the current server.
 
 ## Historical Python Runtime: The 3-Model Workflow
 
@@ -56,7 +104,7 @@ Most voice applications need two very different things: long, cheap narrator rea
 
 ## Quick Setup
 
-The current server uses **audio.cpp** for all synthesis. Python provides the OpenAI-compatible API and Voice Atelier web UI. The workflow above describes the previous Python runtime.
+The current server uses **audio.cpp** for all synthesis. Python provides the OpenAI-compatible API and Castward Voice Studio web UI. The workflow above describes the previous Python runtime.
 
 For a fresh Python environment:
 
@@ -75,7 +123,7 @@ From the repository directory, run:
 ./run-local.sh --port 8001
 ```
 
-Then open **Voice Atelier** at <http://127.0.0.1:8001/>. The launcher starts audio.cpp on port 7862 if needed, then starts the compatibility API on port 8001. It stops only the processes it started when you exit.
+Then open **Castward Voice Studio** at <http://127.0.0.1:8001/>. The launcher starts audio.cpp on port 7862 if needed, then starts the compatibility API on port 8001. It stops only the processes it started when you exit.
 
 The supplied local configuration expects the native binary at `../Ming/audio.cpp/build/ming-cuda/bin/audiocpp_server`, with Ming and Qwen on GPU 1 and Kokoro on GPU 0. Edit model paths and devices in `audiocpp-server.local.json` to match your machine. Public model profiles and the native service URL are configured in `backend.json`. Launcher overrides and further details are in [AUDIOCPP.md](AUDIOCPP.md#run-locally); native startup logs are written to `audiocpp-backend.log`.
 
