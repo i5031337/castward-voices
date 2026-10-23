@@ -26,6 +26,23 @@ class ModelProfileTests(unittest.TestCase):
         self.assertEqual(config.resolve('npc')[1].clone_model,'ming')
         self.assertIsNone(config.resolve('qwen3-customvoice')[1].clone_model)
 
+    def test_firered_pilot_maps_design_and_clone_templates(self):
+        config=load_config(Path(__file__).resolve().parents[1]/'backend-firered.json')
+        profile=config.models['fireredtts3']
+        backend=AudioCppBackend(config)
+        body=SpeechRequest(model='fireredtts3',input='The gate is open.',language='English',seed=42)
+        design=backend.payload(profile,body,mode='design',instruction='An older, gravelly guard')
+        self.assertEqual(design['model'],'firered-instruct')
+        self.assertEqual(design['options']['template_name'],'voice_design')
+        self.assertEqual(design['options']['instruct'],'An older, gravelly guard')
+        self.assertEqual(design['options']['language'],'English')
+        reference=(np.ones(2400)*0.1,24000)
+        clone=backend.payload(profile,body,mode='clone',reference=reference,reference_text='The gate is open.')
+        self.assertEqual(clone['options']['template_name'],'instruct_tts')
+        self.assertEqual(clone['options']['reference_text'],'The gate is open.')
+        self.assertIn('voice_ref',clone)
+        backend.close()
+
     def test_speaker_only_is_opt_in_and_explicit_overrides_remain_available(self):
         config=ServerConfig.model_validate(CONFIG)
         backend=AudioCppBackend(config)

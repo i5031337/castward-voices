@@ -6,6 +6,31 @@ Castward Voices is the local speech companion for the Castward RPG extension. Al
 
 The existing virtual environment can run the new server. A fresh Python 3.11 environment needs `uv pip install -r requirements.lock.txt`; install FFmpeg separately for tempo changes, AAC, and Opus. Optional CPU word alignment needs `uv pip install -r requirements-alignment.txt` and the local Whisper checkpoint (`python download_alignment.py`).
 
+### Windows FireRedTTS3 pilot
+
+`audiocpp-server.firered.json` and `backend-firered.json` isolate FireRedTTS3 Instruct from the older machine's native model paths. `run-firered.ps1` starts the native server and Castward API together, then stops only those child processes when the launcher exits. Open <http://127.0.0.1:8001/> after starting it. The native model is lazy-loaded on the first synthesis request.
+
+The pilot uses the official [audio.cpp v0.9.2 Windows CUDA 13.3 binary](https://github.com/0xShug0/audio.cpp/releases/tag/v0.9.2) extracted into `.cache/audio.cpp-v0.9.2/runtime/`, and the [FireRedTTS3 Instruct Q8 GGUF](https://huggingface.co/audio-cpp/audio.cpp-gguf/tree/ef1ab2598f6d4d101486e4c5b9e605c687f20642/FireRedTTS3-Instruct-GGUF) under `models/audiocpp-extra/`. The supplied native config runs a locally converted **Q4_K Instruct** file on GPU 0. Both directories are ignored by Git. The conversion preserves audio.cpp's eight embedded sidecars and model spec. The original Q8 is 4.15 GB and does not fit this machine's 4 GB GPU; the converted Q4_K is 3.19 GB on disk. This lower-bit FireRed variant has not been quality-validated against Q8 beyond smoke synthesis.
+
+From PowerShell in the repository directory, with `hf` and `uv` installed:
+
+```powershell
+uv venv --python 3.12 .venv
+uv pip install --python .venv\Scripts\python.exe -r requirements.lock.txt
+New-Item -ItemType Directory -Force .cache\audio.cpp-v0.9.2 | Out-Null
+curl.exe -L --fail --output .cache\audio.cpp-v0.9.2\audio-v0.9.2-bin-windows-x64-cuda13.3.zip https://github.com/0xShug0/audio.cpp/releases/download/v0.9.2/audio-v0.9.2-bin-windows-x64-cuda13.3.zip
+Expand-Archive -LiteralPath .cache\audio.cpp-v0.9.2\audio-v0.9.2-bin-windows-x64-cuda13.3.zip -DestinationPath .cache\audio.cpp-v0.9.2\runtime
+hf download audio-cpp/audio.cpp-gguf FireRedTTS3-Instruct-GGUF/fireredtts3-instruct-q8_0.gguf --revision ef1ab2598f6d4d101486e4c5b9e605c687f20642 --local-dir models\audiocpp-extra
+.\.cache\audio.cpp-v0.9.2\runtime\audiocpp_gguf.exe --input models\audiocpp-extra\FireRedTTS3-Instruct-GGUF\fireredtts3-instruct-q8_0.gguf --output models\audiocpp-extra\FireRedTTS3-Instruct-GGUF\fireredtts3-instruct-q4_k.gguf --type q4_k --family fireredtts3
+.\run-firered.ps1
+```
+
+The public `fireredtts3` profile maps `voice_design` and `instruct_tts` templates to the same native Instruct checkpoint. Preset-style synthesis uses the configured `alloy` description to design a fresh voice; NPC requests generate a first designed recording and then clone from its prepared reference. FireRed's [model guide](https://github.com/0xShug0/audio.cpp/blob/main/docs/models/fireredtts3.md) documents the reference transcript, language tags, and uint32 seed limit.
+
+Local smoke results on the GTX 1650 Ti, with `num_inference_steps=4` and seed 1895: CPU Q8 designed 2.88 seconds of audio in 49.67 seconds (RTF 17.25) and cloned 2.56 seconds in 19.39 seconds (RTF 7.57). The Q4_K GPU facade designed 2.88 seconds in 10.06 seconds including first model load, cloned 3.68 seconds in 3.61 seconds (RTF 0.98), and cloned a 236-character paragraph into 18.08 seconds in 14.36 seconds (RTF 0.79). After that paragraph, `nvidia-smi` showed 3,649 MiB used and 287 MiB free. A short new NPC line reached `ready` after reference extension to 5.76 seconds; the next saved-NPC request succeeded in 3.88 seconds end to end. These are single observations, not medians or peak VRAM measurements. The Q4 output needs listening review and broader text/voice tests before changing the default profile.
+
+The separate [CrispASR Q4_K package](https://huggingface.co/cstr/fireredtts3-GGUF) is a 2.4 GB **Base** model with a separate RedAE file. It does not include Instruct voice design, and its GGUF layout is not documented as compatible with audio.cpp. The local audio.cpp-native conversion above retains the Instruct workflow.
+
 ```bash
 ./run-local.sh --port 8001
 ```
@@ -35,6 +60,21 @@ Without `--kokoro-cpu`, startup and the existing GPU narration configuration are
 Live validation covered UI discovery, offline CPU narration, CPU PCM streaming alongside Ming design/cloning and Qwen design/both cloning sizes, and checkpoint eviction. The CUDA process peaked at **4.05 GiB** across those workloads; the CPU process showed **zero GPU allocation**. Terminating a native child verified cleanup of both native processes, the facade, and temporary configs while the original server remained running. See [`benchmarks/cpu-kokoro-launch-validation-2026-10-22.json`](benchmarks/cpu-kokoro-launch-validation-2026-10-22.json).
 
 ## Replace models through configuration
+
+### Future model candidates (2026-10-23)
+
+These are candidates for separate experiments, not measured or enabled Castward profiles. Compare each against Ming, Qwen, and Kokoro with the same text and reference recordings before changing defaults.
+
+| Candidate | Reason to evaluate | Integration consideration |
+|---|---|---|
+| PocketTTS 100M | Small, clone-capable alternative for CPU character speech; packaged voices and reusable prepared voice states | First test ordinary reference cloning. Persisting prepared states would need an additional Castward voice lifecycle path. Weights are CC-BY-4.0; retain attribution. |
+| VoxCPM2 | Design, controllable cloning, 48 kHz output, and native streaming | Design instructions are prepended to the input text, so the generic `instruction_option` mapping is insufficient without adapter work. Measure VRAM and latency before considering it for the shared GPU. Weights are Apache-2.0. |
+| VibeVoice 1.5B | Long-form, multi-speaker audiobook scenes | Requires speaker-labeled scripts and multiple ordered voice references. This is a scene-rendering feature, not a normal single-voice profile. Weights are MIT. |
+| Qwen native streaming | Earlier first audio from checkpoints already installed | Add separate streaming native entries and test the PCM/SSE path; Base streaming needs reference audio, while the current public streaming request path does not supply one. VoiceDesign or CustomVoice may be simpler first tests. |
+| OmniVoice | One family offers design, cloning, broad language coverage, and chunked streaming | Its streaming is chunked pseudo-streaming. Original OmniVoice weights are non-commercial, so treat it as a research comparison unless licensing changes. |
+| Fish Audio S2 Pro | Expressive cloning and multi-reference, speaker-tagged dialogue | Multi-reference conditioning needs a new UI/API input path. Its research license requires separate permission for commercial use. |
+
+Source documentation: [audio.cpp TTS models](https://github.com/0xShug0/audio.cpp/blob/main/docs/tts.md), [Qwen streaming](https://github.com/0xShug0/audio.cpp/blob/main/docs/models/qwen3_tts.md), and [model licenses](https://github.com/0xShug0/audio.cpp/blob/main/docs/model_licenses.md).
 
 `backend.json` maps public profile IDs to native IDs. The supplied `npc` profile uses Ming for design and cloning; `narrator` uses Kokoro for narration and streaming. Old client model IDs are optional aliases in this JSON file. Neither model names nor Qwen generation defaults are embedded in the Python routing code.
 

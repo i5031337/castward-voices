@@ -1,0 +1,37 @@
+{
+  "backend_url": "http://127.0.0.1:7862",
+  "default_model": "fireredtts3",
+  "output_sample_rate": 24000,
+  "alignment_model": null,
+  "models": {
+    "fireredtts3": {
+      "backend_model": "firered-instruct",
+      "design_model": "firered-instruct",
+      "clone_model": "firered-instruct",
+      "instruction_option": "instruct",
+      "seed_max": 4294967295,
+      "language_map": {
+        "Auto": "English"
+      },
+      "default_voice": "alloy",
+      "voice_descriptions": {
+        "alloy": "A warm, clear narrator with a natural, conversational delivery."
+      },
+      "options": {
+        "template_name": "voice_design"
+      },
+      "design_options": {
+        "template_name": "voice_design"
+      },
+      "clone_options": {
+        "template_name": "instruct_tts"
+      },
+      "instruction_conditions": {
+        "template_name": ["voice_design"]
+      },
+      "max_input_chars": 4096,
+      "display_name": "FireRedTTS3 Instruct · design & clone (Q4 GPU pilot)",
+      "description": "Design voices from descriptions and clone from reference recordings with FireRedTTS3 Instruct."
+    }
+  }
+}
