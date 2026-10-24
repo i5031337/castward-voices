@@ -173,7 +173,8 @@ function renderOptions() {
     const field = create('div', 'field'); let control;
     if (param.type === 'enum' || param.type === 'bool') {
       control = document.createElement('select');
-      const values = param.type === 'bool' ? [true, false] : (param.values || []);
+      const allowed = p.mode_conditions?.[state.mode]?.[param.name];
+      const values = param.type === 'bool' ? [true, false] : (param.values || []).filter((value) => !allowed || allowed.includes(value));
       for (const value of values) { const option = document.createElement('option'); option.value = String(value); option.textContent = String(value); control.append(option); }
     } else if (['int', 'float', 'number'].includes(param.type)) {
       control = document.createElement('input'); control.type = 'number'; control.step = param.type === 'int' ? '1' : 'any';

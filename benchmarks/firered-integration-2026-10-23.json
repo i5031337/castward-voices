@@ -1,0 +1,63 @@
+{
+  "date": "2026-10-23",
+  "backend": "cpu",
+  "cpu": "AMD Ryzen 7 5800X3D",
+  "threads": 4,
+  "native_revision": "bd7032cba3a83144de4480456f7f1e5e7e2dccd9",
+  "model": "FireRedTTS3-Instruct-GGUF/fireredtts3-instruct-q8_0.gguf",
+  "model_revision": "ef1ab2598f6d4d101486e4c5b9e605c687f20642",
+  "seed": 1895,
+  "options": {
+    "num_inference_steps": 4
+  },
+  "checks": [
+    "studio discovery",
+    "design",
+    "reference clone",
+    "compatibility preset",
+    "short NPC extension to ready",
+    "saved NPC reuse",
+    "finite non-silent 24 kHz output"
+  ],
+  "observations": [
+    {
+      "name": "design",
+      "elapsed_seconds": 12.808855015000518,
+      "audio_seconds": 3.84,
+      "sample_rate": 24000
+    },
+    {
+      "name": "clone",
+      "elapsed_seconds": 6.7872731129991735,
+      "audio_seconds": 3.84,
+      "sample_rate": 24000
+    },
+    {
+      "name": "preset",
+      "elapsed_seconds": 6.381897985000251,
+      "audio_seconds": 1.6,
+      "sample_rate": 24000
+    },
+    {
+      "name": "npc-first",
+      "elapsed_seconds": 20.2732049440001,
+      "audio_seconds": 0.96,
+      "sample_rate": 24000,
+      "reference_seconds": 5.12,
+      "reference_source": "extended_dialogue"
+    },
+    {
+      "name": "npc-reuse",
+      "elapsed_seconds": 5.9843714220005495,
+      "audio_seconds": 3.04,
+      "sample_rate": 24000
+    }
+  ],
+  "limitations": [
+    "Single observations, not performance medians.",
+    "First design includes model loading.",
+    "NPC first-request elapsed time includes background preparation because TestClient waits.",
+    "No listening or transcript coverage evaluation.",
+    "NVIDIA driver unavailable; CUDA and memory use not validated."
+  ]
+}

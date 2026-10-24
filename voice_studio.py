@@ -98,7 +98,7 @@ def register_studio(app, settings, authenticate, SpeechRequest, encode_audio):
             effective = profile.options_for(body.mode, request.options)
             if request.instructions and profile.instruction_option:
                 effective[profile.instruction_option] = request.instructions
-            profile.validate_options(effective)
+            profile.validate_options(effective, body.mode)
             if request.npc_id or request.stream:
                 raise ValueError("The studio uses standalone clips; NPC persistence and streaming use /v1/audio/speech")
             if len(request.input) > profile.max_input_chars:

@@ -121,7 +121,7 @@ class AudioCppBackend:
                 opts[profile.reference_text_option] = reference_text
             elif profile.speaker_only_option:
                 opts.setdefault(profile.speaker_only_option, True)
-        profile.validate_options(opts)
+        profile.validate_options(opts, mode)
         return request
 
     def generate(self, profile, body, **kwargs):

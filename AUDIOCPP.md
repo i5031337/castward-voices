@@ -6,6 +6,43 @@ Castward Voices is the local speech companion for the Castward RPG extension. Al
 
 The existing virtual environment can run the new server. A fresh Python 3.11 environment needs `uv pip install -r requirements.lock.txt`; install FFmpeg separately for tempo changes, AAC, and Opus. Optional CPU word alignment needs `uv pip install -r requirements-alignment.txt` and the local Whisper checkpoint (`python download_alignment.py`).
 
+### FireRedTTS3 in the standard server
+
+The normal `backend.json` and `audiocpp-server.local.json` include the public `fireredtts3` profile. It uses one FireRedTTS3 Instruct checkpoint for design and cloning, loaded on demand on GPU 1 alongside the other character models. Ming remains the default. CPU narration mode routes FireRed to the selected GPU with the same one-model residency limit as Ming and Qwen.
+
+Install the Q8 checkpoint and build all four supported families from the local audio.cpp source checkout:
+
+```bash
+./setup-firered.sh
+# Another checkout or build parallelism:
+AUDIOCPP_SOURCE=/path/to/audio.cpp BUILD_JOBS=4 ./setup-firered.sh
+./run-local.sh --kokoro-cpu --port 8001
+```
+
+The helper updates the existing `../Ming/audio.cpp/build/ming-cuda` build so unchanged CUDA components can be reused. It preserves cached compiler, toolkit, build-type, and GPU-target settings. It downloads the pinned native Instruct Q8 package into `models/audiocpp-extra/`; the other families' weights are still required. Restart the native service after adding FireRed so discovery includes `firered-instruct`. Ordinary startup remains `./run-local.sh`; setup is only needed when installing or updating the native runtime.
+
+For other machines, `AUDIOCPP_SOURCE` selects the source checkout and `AUDIOCPP_BUILD_DIR` overrides its default `build/ming-cuda` directory. Set `AUDIOCPP_SERVER` to the resulting `bin/audiocpp_server` when launching a custom build. Fresh CUDA builds target the installed GPUs (`native`), rather than a fixed GPU generation. To build for other GPUs, supply a CMake target list, for example `CUDA_ARCHITECTURES='75-real;86-real;120-real' ./setup-firered.sh`; the installed CUDA toolkit must support those targets. Changing targets can require recompiling CUDA. Native detection needs a working GPU driver; use explicit targets when cross-building without one.
+
+Two compiler jobs are used by default. Set `BUILD_JOBS=4` or higher for faster builds with more CPU use. After Ctrl+C, resume the existing build with `cmake --build ../Ming/audio.cpp/build/ming-cuda --target audiocpp_server --parallel 2` to retain completed work.
+
+`./setup-firered.sh --cpu` builds separately under `.cache/audio.cpp-cpu-build`, preserving the GPU build. Launch that binary with `AUDIOCPP_SERVER` and a native config using `backend: "cpu"` (set `AUDIOCPP_CONFIG` accordingly). CPU and GPU device choices remain native configuration settings. The Windows pilot launcher below is unchanged.
+
+Select **FireRedTTS3 Instruct** in Studio for Design or Clone, or send `model: "fireredtts3"` to `/v1/audio/speech`. NPC creation, background reference preparation, recovery, saved-reference reuse, the SillyNPC bridge, output formats, and FFmpeg tempo adjustment use the existing server paths. Compatibility voices such as `alloy`, `echo`, and `nova` design a fresh recording from their descriptions; save an NPC or reuse a reference to keep a voice identity.
+
+Design uses `template_name=voice_design`; Clone uses `instruct_tts`. The profile's `mode_conditions` restrict each mode to its compatible template in both the adapter and Studio. Semantic/acoustic editing requires native input-audio fields that this speech UI/API does not expose. Cloning accepts the reference transcript; complete short NPC recordings also supply their known transcript during extension. Cropped or possibly truncated recordings do not receive a guessed transcript. FireRed has no native streaming entry; PCM downloads are supported, while `stream: true` is rejected.
+
+Native discovery supplies the flow-step, guidance, stop-threshold, and text-chunk controls. Untouched controls retain native defaults, including ten inference steps. Seeds use `0..4294967295`. Language names retain FireRed's capitalization; `Auto` maps to English, and native dialect tags can be entered directly. See the [native FireRed guide](https://github.com/0xShug0/audio.cpp/blob/main/docs/models/fireredtts3.md) for supported tags and model limitations. The earlier Ming/Qwen memory budgets do not establish a FireRed Q8 budget.
+
+Reproduce the live design/clone/preset/NPC checks against a running FireRed-capable native service:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python tests/smoke_firered.py --backend-url http://127.0.0.1:7862
+```
+
+This uses temporary NPC storage and saves recordings and observations under `out/bench/firered-smoke/`. It checks finite, non-silent audio and NPC readiness; it does not assess voice quality. API elapsed times include reference preparation for the first NPC request because the test waits for its background task.
+
+The [2026-10-23 CPU integration run](benchmarks/firered-integration-2026-10-23.json) passed discovery, design, cloning, compatibility presets, short-NPC extension, and saved-reference reuse with native Q8, four Ryzen 5800X3D threads, and four inference steps. The 0.96-second first NPC recording was extended to a 5.12-second reference and reached `ready`. These are single smoke observations; CUDA and GPU memory were not measured because the NVIDIA driver was unavailable in that session.
+
 ### Windows FireRedTTS3 pilot
 
 `audiocpp-server.firered.json` and `backend-firered.json` isolate FireRedTTS3 Instruct from the older machine's native model paths. `run-firered.ps1` starts the native server and Castward API together, then stops only those child processes when the launcher exits. Open <http://127.0.0.1:8001/> after starting it. The native model is lazy-loaded on the first synthesis request.
@@ -35,7 +72,7 @@ The separate [CrispASR Q4_K package](https://huggingface.co/cstr/fireredtts3-GGU
 ./run-local.sh --port 8001
 ```
 
-This starts audio.cpp on port 7862 if it is not already healthy, then the compatibility API on port 8001. The launcher stops only processes it started. It uses the native binary built in `../Ming/audio.cpp/build/ming-cuda/bin/audiocpp_server`, with Ming Q8 on GPU 1 and Kokoro Q8 on GPU 0. Offline and streaming Kokoro are separate native model entries and can consume separate memory. Change paths, devices, residency, and threads in `audiocpp-server.local.json` for other machines. Build audio.cpp with both `ming3_tts` and `kokoro_tts` enabled.
+This starts audio.cpp on port 7862 if it is not already healthy, then the compatibility API on port 8001. The launcher stops only processes it started. It uses `../Ming/audio.cpp/build/ming-cuda/bin/audiocpp_server`, with character models on GPU 1 and Kokoro Q8 on GPU 0. Offline and streaming Kokoro are separate native model entries and can consume separate memory. Change paths, devices, residency, and threads in `audiocpp-server.local.json` for other machines. Build audio.cpp with `ming3_tts`, `kokoro_tts`, `qwen3_tts`, and `fireredtts3` enabled.
 
 Environment overrides: `PYTHON`, `AUDIOCPP_SERVER`, `AUDIOCPP_CONFIG`, `AUDIOCPP_CUDA_LIB`, and `SPEECH_CONFIG`. Native logs go to `audiocpp-backend.log`. `TTS_API_KEY` still enables bearer authentication on the Python API. Separately hosted native services can be configured with `backend_url`, optional native-model-ID `backend_routes`, and `backend_api_key_env` in `backend.json`; it can also be used directly with `python server.py --config backend.json`.
 

@@ -61,6 +61,14 @@
       "task": "tts",
       "mode": "offline",
       "device": 1
+    },
+    {
+      "id": "firered-instruct",
+      "family": "fireredtts3",
+      "path": "models/audiocpp-extra/FireRedTTS3-Instruct-GGUF/fireredtts3-instruct-q8_0.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "device": 1
     }
   ]
 }

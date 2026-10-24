@@ -27,6 +27,7 @@ class ModelProfile(BaseModel):
     preset_options: dict[str, Any] = Field(default_factory=dict)
     option_dependencies: dict[str, dict[str, list[Any]]] = Field(default_factory=dict)
     instruction_conditions: dict[str, list[Any]] = Field(default_factory=dict)
+    mode_conditions: dict[str, dict[str, list[Any]]] = Field(default_factory=dict)
     options: dict[str, Any] = Field(default_factory=dict)
     design_options: dict[str, Any] = Field(default_factory=dict)
     clone_options: dict[str, Any] = Field(default_factory=dict)
@@ -54,7 +55,11 @@ class ModelProfile(BaseModel):
     def accepts_instruction(self, options):
         return self.conditions_match(options, self.instruction_conditions)
 
-    def validate_options(self, options):
+    def validate_options(self, options, mode=None):
+        conditions = self.mode_conditions.get(mode, {})
+        if not self.conditions_match(options, conditions):
+            required = "; ".join(f"{key}={','.join(map(str, allowed))}" for key, allowed in conditions.items())
+            raise ValueError(f"{mode} mode requires {required} for this profile")
         for name, conditions in self.option_dependencies.items():
             if name in options and not self.conditions_match(options, conditions):
                 required = "; ".join(f"{key}={','.join(map(str, allowed))}" for key, allowed in conditions.items())

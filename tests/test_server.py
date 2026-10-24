@@ -86,7 +86,26 @@ class ServerTests(unittest.TestCase):
         meta=json.loads((self.folder()/'metadata.json').read_text())
         self.assertEqual(meta['status'],'ready');self.assertEqual(meta['reference_source'],'extended_dialogue')
         _,kwargs=self.backend.calls[-1]
-        self.assertEqual(kwargs['mode'],'clone');self.assertIn('reference',kwargs);self.assertNotIn('reference_text',kwargs)
+        self.assertEqual(kwargs['mode'],'clone');self.assertIn('reference',kwargs);self.assertEqual(kwargs['reference_text'],'short')
+
+    def test_cropped_and_possibly_truncated_extensions_do_not_guess_transcripts(self):
+        from unittest.mock import patch
+        self.assertEqual(self.request(npc_id='guard',instructions='A guard',input='short').status_code,200)
+        engine=self.client.app.state.engine
+        folder=self.folder()
+        metadata=json.loads((folder/'metadata.json').read_text())
+        for seconds,truncated in ((12,False),(2,True)):
+            with self.subTest(seconds=seconds,truncated=truncated):
+                sf.write(folder/'dialogue.wav',np.ones(24000*seconds)*.1,24000)
+                (folder/'reference.wav').unlink(missing_ok=True)
+                metadata.update(status='failed',may_be_truncated=truncated)
+                engine.write_metadata(folder,metadata)
+                with patch.object(engine.selector,'select',side_effect=[
+                    ValueError('No complete reference'),(np.ones(44100*4)*.1,'Extended words','dialogue')]):
+                    engine.prepare('guard')
+                kwargs=self.backend.calls[-1][1]
+                self.assertIsNone(kwargs['reference_text'])
+                self.assertLessEqual(len(kwargs['reference'][0]),24000*10)
 
     def test_creation_is_serialized_and_recovery_preserves_first_recording(self):
         with ThreadPoolExecutor(max_workers=3) as pool:

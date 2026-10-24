@@ -11,11 +11,47 @@
       "instruction_option": "instruct",
       "seed_max": 4294967295,
       "language_map": {
-        "Auto": "English"
+        "Auto": "English",
+        "Arabic": "Arabic",
+        "Cantonese": "Cantonese",
+        "Chinese": "Chinese",
+        "Czech": "Czech",
+        "Dutch": "Dutch",
+        "English": "English",
+        "Finnish": "Finnish",
+        "French": "French",
+        "German": "German",
+        "Greek": "Greek",
+        "Hindi": "Hindi",
+        "Indonesian": "Indonesian",
+        "Italian": "Italian",
+        "Japanese": "Japanese",
+        "Korean": "Korean",
+        "Polish": "Polish",
+        "Portuguese": "Portuguese",
+        "Romanian": "Romanian",
+        "Russian": "Russian",
+        "Spanish": "Spanish",
+        "Thai": "Thai",
+        "Turkish": "Turkish",
+        "Ukrainian": "Ukrainian",
+        "Vietnamese": "Vietnamese"
       },
       "default_voice": "alloy",
       "voice_descriptions": {
-        "alloy": "A warm, clear narrator with a natural, conversational delivery."
+        "alloy": "A warm, clear narrator with a natural, conversational delivery.",
+        "ash": "A calm male voice with a clear, conversational delivery.",
+        "ballad": "A gentle male storyteller with expressive, measured delivery.",
+        "coral": "A bright, friendly female voice with an expressive delivery.",
+        "echo": "A smooth male voice with a relaxed conversational delivery.",
+        "fable": "An expressive storyteller with a rich, animated delivery.",
+        "onyx": "A deep male narrator with a rich baritone and measured delivery.",
+        "nova": "An energetic young woman with a clear, upbeat delivery.",
+        "sage": "A calm, gentle voice with a thoughtful, measured delivery.",
+        "shimmer": "A soft, warm female voice with a clear delivery.",
+        "verse": "An expressive, lively voice with a conversational delivery.",
+        "marin": "A warm female narrator with a clear, natural delivery.",
+        "cedar": "A warm male narrator with a clear, natural delivery."
       },
       "options": {
         "template_name": "voice_design"
@@ -27,11 +63,30 @@
         "template_name": "instruct_tts"
       },
       "instruction_conditions": {
-        "template_name": ["voice_design"]
+        "template_name": [
+          "voice_design"
+        ]
       },
       "max_input_chars": 4096,
       "display_name": "FireRedTTS3 Instruct · design & clone (Q4 GPU pilot)",
-      "description": "Design voices from descriptions and clone from reference recordings with FireRedTTS3 Instruct."
+      "description": "Design and clone with FireRedTTS3 Instruct. Compatibility preset names design fresh voices; cloning uses a reference recording and transcript.",
+      "mode_conditions": {
+        "speech": {
+          "template_name": [
+            "voice_design"
+          ]
+        },
+        "design": {
+          "template_name": [
+            "voice_design"
+          ]
+        },
+        "clone": {
+          "template_name": [
+            "instruct_tts"
+          ]
+        }
+      }
     }
   }
 }

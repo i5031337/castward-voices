@@ -86,8 +86,14 @@ class SpeechEngine:
                 body = SpeechRequest(model=model_id, input=self.config.reference_extension_text,
                     language=self.config.reference_extension_language,
                     seed=metadata["seed"] % (profile.seed_max + 1), response_format="wav")
+                # A complete short recording has a known transcript. A cropped long
+                # recording does not; passing its full text would misalign cloning.
+                reference_text = None
+                if len(audio) / rate <= self.config.reference_max_seconds and not metadata.get("may_be_truncated", False):
+                    reference_text = metadata["dialogue_text"]
                 extended, rate = self.backend.generate(profile, body, mode="clone",
                     reference=(audio[:round(rate * self.config.reference_max_seconds)], rate),
+                    reference_text=reference_text,
                     options=self.config.reference_options)
                 segment, transcript, _ = self.selector.select(extended, rate, body.input, body.language)
                 source, language = "extended_dialogue", body.language

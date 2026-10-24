@@ -2,11 +2,11 @@
 
 <p><img src="webui/branding/castward-voices-logo.svg" width="640" alt="Castward Voices"></p>
 
-Local voice design, cloning, and narration for the **Castward SillyTavern RPG extension**, with an OpenAI-compatible speech API and **Castward Voice Studio** web UI. Ming is the default character voice model, Qwen offers alternative design and cloning profiles, and Kokoro provides preset narrator voices. All synthesis runs through audio.cpp.
+Local voice design, cloning, and narration for the **Castward SillyTavern RPG extension**, with an OpenAI-compatible speech API and **Castward Voice Studio** web UI. Ming is the default character voice model, Qwen and FireRed offer alternative design and cloning profiles, and Kokoro provides preset narrator voices. All synthesis runs through audio.cpp.
 
 ## Setup
 
-You need Python 3.11, [uv](https://docs.astral.sh/uv/), a built `audiocpp_server`, and GGUF model files. The supplied native configuration uses CUDA; build audio.cpp with `ming3_tts`, `kokoro_tts`, and `qwen3_tts` support to use all included profiles. Install FFmpeg for Opus, AAC, and playback tempo changes.
+You need Python 3.11, [uv](https://docs.astral.sh/uv/), a built `audiocpp_server`, and GGUF model files. The supplied native configuration uses CUDA; build audio.cpp with `ming3_tts`, `kokoro_tts`, `qwen3_tts`, and `fireredtts3` support to use all included profiles. Install FFmpeg for Opus, AAC, and playback tempo changes.
 
 From the repository directory:
 
@@ -18,7 +18,8 @@ uv pip install --python .venv/bin/python -r requirements.lock.txt
 Configure the native backend for your machine before starting:
 
 - In [audiocpp-server.local.json](audiocpp-server.local.json), set model `path` values to your GGUF files. Configure GPU devices and CPU threads there as needed.
-- The launcher expects the binary at `../Ming/audio.cpp/build/ming-cuda/bin/audiocpp_server`. Set `AUDIOCPP_SERVER` to use a different path.
+- Run `./setup-firered.sh` to add FireRed to the existing `../Ming/audio.cpp/build/ming-cuda` build and download its pinned Instruct Q8 checkpoint. Existing compiler and GPU settings are preserved; fresh builds target the installed GPUs. Existing Ming, Qwen, and Kokoro files are still required.
+- The launcher expects `../Ming/audio.cpp/build/ming-cuda/bin/audiocpp_server`. Set `AUDIOCPP_SOURCE` and optionally `AUDIOCPP_BUILD_DIR` during setup for other layouts, then set `AUDIOCPP_SERVER` to the resulting binary when launching. CPU-only builds and explicit GPU targets are covered in the [FireRed guide](AUDIOCPP.md#fireredtts3-in-the-standard-server).
 - [backend.json](backend.json) defines the public model profiles and native service URL. See the [native configuration guide](AUDIOCPP.md#replace-models-through-configuration) for custom profiles.
 
 Start with CPU narration and character synthesis on GPU 0:
@@ -29,7 +30,7 @@ Start with CPU narration and character synthesis on GPU 0:
 
 Open **<http://127.0.0.1:8001/>** for Castward Voice Studio. Use `--gpu-device 1` to select another GPU in this mode. The launcher manages the native services and stops them when you exit.
 
-For GPU narration, run `./run-local.sh --port 8001`. The supplied configuration places Ming/Qwen on GPU 1 and Kokoro on GPU 0; for a single GPU, set every model's `device` to `0` in `audiocpp-server.local.json`.
+For GPU narration, run `./run-local.sh --port 8001`. The supplied configuration places Ming/Qwen/FireRed on GPU 1 and Kokoro on GPU 0; for a single GPU, set every model's `device` to `0` in `audiocpp-server.local.json`.
 
 ### Hardware guidance
 
@@ -58,6 +59,7 @@ Choose a model, then a supported mode:
 | Qwen (`qwen3-tts`) | 1.7B voice design and 0.6B cloning |
 | Qwen (`qwen3-tts-1.7b`) | 1.7B voice design and 1.7B cloning |
 | Qwen CustomVoice (`qwen3-customvoice`) | Nine preset speakers |
+| FireRed (`fireredtts3`) | Instruct voice design and reference cloning; compatibility presets design fresh voices |
 | Kokoro (`narrator`, alias `kokoro`) | Preset narration and PCM streaming |
 
 The Studio provides playback, waveforms, downloads, and model-specific generation controls. Takes stay in browser memory: **download anything you want to keep before refreshing**. Studio takes do not create saved NPC voices. See the [Studio guide](AUDIOCPP.md#castward-voice-studio-web-ui) for reference limits and advanced controls.
