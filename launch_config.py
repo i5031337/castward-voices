@@ -1,4 +1,4 @@
-"""Prepare temporary native/facade configs for CPU Kokoro and CUDA character speech."""
+"""Prepare temporary configs for CPU Kokoro/PocketTTS and CUDA character speech."""
 import argparse
 import copy
 import json
@@ -29,8 +29,10 @@ def prepare_configs(native_path, speech_path, output_dir, *, gpu_device=0, gpu_p
             if isinstance(preset.get("voice_ref"), str):
                 path = Path(preset["voice_ref"])
                 preset["voice_ref"] = str(path if path.is_absolute() else native_path.parent / path)
-    cpu_models = [model for model in models if model.get("family") == "kokoro_tts"]
-    gpu_models = [model for model in models if model.get("family") != "kokoro_tts"]
+    catalog = json.loads((Path(__file__).parent / "model_catalog.json").read_text())
+    cpu_families = {model["family"] for model in catalog["models"].values() if model.get("prefer_cpu")}
+    cpu_models = [model for model in models if model.get("family") in cpu_families]
+    gpu_models = [model for model in models if model.get("family") not in cpu_families]
     if not cpu_models or not gpu_models:
         raise ValueError("--kokoro-cpu needs Kokoro and at least one GPU model in the native config")
     cpu_ids = {model["id"] for model in cpu_models}

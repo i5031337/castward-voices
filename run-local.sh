@@ -5,6 +5,13 @@ speech_python="${PYTHON:-$PWD/.venv/bin/python}"
 native_binary="${AUDIOCPP_SERVER:-$PWD/../Ming/audio.cpp/build/ming-cuda/bin/audiocpp_server}"
 speech_config="${SPEECH_CONFIG:-$PWD/backend.json}"
 native_config="${AUDIOCPP_CONFIG:-$PWD/audiocpp-server.local.json}"
+if [[ -f "$PWD/.cache/install/settings.json" ]]; then
+    if [[ -z "${AUDIOCPP_SERVER:-}" ]]; then
+        IFS= read -r native_binary < "$PWD/.cache/install/server-path"
+    fi
+    speech_config="${SPEECH_CONFIG:-$PWD/.cache/install/backend.json}"
+    native_config="${AUDIOCPP_CONFIG:-$PWD/.cache/install/native.json}"
+fi
 native_pid=""
 cpu_pid=""
 facade_pid=""
@@ -25,7 +32,7 @@ while (($#)); do
         -h|--help)
             echo 'Castward Voices · local speech server'
             echo 'Usage: ./run-local.sh [--kokoro-cpu] [--gpu-device INDEX] [server.py options]'
-            echo '  --kokoro-cpu       CPU Kokoro + CUDA character speech, one resident GPU model'
+            echo '  --kokoro-cpu       CPU Kokoro/PocketTTS + CUDA character speech, one resident GPU model'
             echo '  --gpu-device INDEX GPU for CPU-narration mode (default: 0)'
             echo '  --port PORT        Compatibility API port (default: 8001)'
             exit 0 ;;
@@ -44,7 +51,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-export LD_LIBRARY_PATH="${AUDIOCPP_CUDA_LIB:-/usr/local/cuda-13.1/lib64}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="${AUDIOCPP_CUDA_LIB:-/usr/local/cuda/lib64}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$PWD/.cache}"
 wait_native() {
     "$speech_python" - "$1" "$2" "$3" "$4" <<'PY'
@@ -83,7 +90,7 @@ if ((kokoro_cpu)); then
     cpu_pid=$!
     wait_native "http://127.0.0.1:$gpu_port" "$native_pid" cuda audiocpp-backend-cpu-mode-gpu.log
     wait_native "http://127.0.0.1:$cpu_port" "$cpu_pid" cpu audiocpp-backend-cpu.log
-    echo "Kokoro: CPU; character speech: CUDA device $gpu_device (one resident GPU model)"
+    echo "Kokoro/PocketTTS: CPU; other character speech: CUDA device $gpu_device (one resident GPU model)"
 elif ! "$speech_python" - "$speech_config" <<'PY'
 import json,sys,httpx
 try:

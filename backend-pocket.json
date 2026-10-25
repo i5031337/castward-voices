@@ -1,0 +1,18 @@
+{
+  "backend_url": "http://127.0.0.1:7865",
+  "default_model": "pocket-tts",
+  "output_sample_rate": 24000,
+  "alignment_model": null,
+  "models": {
+    "pocket-tts": {
+      "backend_model": "pocket-english",
+      "clone_model": "pocket-english",
+      "display_name": "PocketTTS 100M · English",
+      "description": "Kyutai PocketTTS 100M: packaged English voices and reference-audio cloning. No voice design. CC-BY-4.0; see THIRD_PARTY_NOTICES.md.",
+      "language_option": null,
+      "reference_text_option": null,
+      "seed_max": 4294967295,
+      "default_voice": "alba"
+    }
+  }
+}

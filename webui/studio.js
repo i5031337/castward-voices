@@ -215,6 +215,8 @@ function selectMode(mode) {
   }
   $('design-section').hidden = mode !== 'design';
   $('clone-direction-field').hidden = !p.instruction_option;
+  $('reference-transcript-field').hidden = !p.reference_text_option;
+  $('language-field').hidden = !p.language_option;
   $('description-label').textContent = mode === 'clone' ? 'Additional voice direction · optional' : 'Voice direction';
   $('instructions').required = mode === 'design';
   $('direction-chips').hidden = mode !== 'design';

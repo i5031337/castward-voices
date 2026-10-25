@@ -10,22 +10,19 @@ The existing virtual environment can run the new server. A fresh Python 3.11 env
 
 The normal `backend.json` and `audiocpp-server.local.json` include the public `fireredtts3` profile. It uses one FireRedTTS3 Instruct checkpoint for design and cloning, loaded on demand on GPU 1 alongside the other character models. Ming remains the default. CPU narration mode routes FireRed to the selected GPU with the same one-model residency limit as Ming and Qwen.
 
-Install the Q8 checkpoint and build all four supported families from the local audio.cpp source checkout:
+Add FireRed to the shared installation:
 
 ```bash
-./setup-firered.sh
-# Another checkout or build parallelism:
-AUDIOCPP_SOURCE=/path/to/audio.cpp BUILD_JOBS=4 ./setup-firered.sh
-./run-local.sh --kokoro-cpu --port 8001
+./setup.sh --add firered
+# Stop the running server, then restart it:
+./run-local.sh --kokoro-cpu
 ```
 
-The helper updates the existing `../Ming/audio.cpp/build/ming-cuda` build so unchanged CUDA components can be reused. It preserves cached compiler, toolkit, build-type, and GPU-target settings. It downloads the pinned native Instruct Q8 package into `models/audiocpp-extra/`; the other families' weights are still required. Restart the native service after adding FireRed so discovery includes `firered-instruct`. Ordinary startup remains `./run-local.sh`; setup is only needed when installing or updating the native runtime.
-
-For other machines, `AUDIOCPP_SOURCE` selects the source checkout and `AUDIOCPP_BUILD_DIR` overrides its default `build/ming-cuda` directory. Set `AUDIOCPP_SERVER` to the resulting `bin/audiocpp_server` when launching a custom build. Fresh CUDA builds target the installed GPUs (`native`), rather than a fixed GPU generation. To build for other GPUs, supply a CMake target list, for example `CUDA_ARCHITECTURES='75-real;86-real;120-real' ./setup-firered.sh`; the installed CUDA toolkit must support those targets. Changing targets can require recompiling CUDA. Native detection needs a working GPU driver; use explicit targets when cross-building without one.
-
-Two compiler jobs are used by default. Set `BUILD_JOBS=4` or higher for faster builds with more CPU use. After Ctrl+C, resume the existing build with `cmake --build ../Ming/audio.cpp/build/ming-cuda --target audiocpp_server --parallel 2` to retain completed work.
-
-`./setup-firered.sh --cpu` builds separately under `.cache/audio.cpp-cpu-build`, preserving the GPU build. Launch that binary with `AUDIOCPP_SERVER` and a native config using `backend: "cpu"` (set `AUDIOCPP_CONFIG` accordingly). CPU and GPU device choices remain native configuration settings. The Windows pilot launcher below is unchanged.
+The common installer builds all cataloged native families, downloads the selected
+Q8 packages, and generates native/API configs containing only enabled models.
+Existing selections are retained by `--add`. `./setup-firered.sh` is a compatibility
+shortcut for the same command. Source/build overrides, CPU-only setup, and the
+initial install are covered in the [README](README.md#setup).
 
 Select **FireRedTTS3 Instruct** in Studio for Design or Clone, or send `model: "fireredtts3"` to `/v1/audio/speech`. NPC creation, background reference preparation, recovery, saved-reference reuse, the SillyNPC bridge, output formats, and FFmpeg tempo adjustment use the existing server paths. Compatibility voices such as `alloy`, `echo`, and `nova` design a fresh recording from their descriptions; save an NPC or reuse a reference to keep a voice identity.
 
@@ -42,6 +39,81 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python tests/smoke_firered.py --backend-url 
 This uses temporary NPC storage and saves recordings and observations under `out/bench/firered-smoke/`. It checks finite, non-silent audio and NPC readiness; it does not assess voice quality. API elapsed times include reference preparation for the first NPC request because the test waits for its background task.
 
 The [2026-10-23 CPU integration run](benchmarks/firered-integration-2026-10-23.json) passed discovery, design, cloning, compatibility presets, short-NPC extension, and saved-reference reuse with native Q8, four Ryzen 5800X3D threads, and four inference steps. The 0.96-second first NPC recording was extended to a 5.12-second reference and reached `ready`. These are single smoke observations; CUDA and GPU memory were not measured because the NVIDIA driver was unavailable in that session.
+
+### PocketTTS 100M: English presets and reference cloning
+
+The public `pocket-tts` profile uses Kyutai's English PocketTTS 100M Q8 checkpoint
+through native `pocket_tts`. It supports packaged voices (default `alba`) and
+ordinary reference-WAV cloning in Studio. Ming remains the default profile.
+PocketTTS does not design voices from descriptions. Reference transcripts and
+language controls are omitted; another language needs its own checkpoint/profile.
+This initial integration exposes offline synthesis; native streaming and persistent
+prepared voice-state exports are not exposed by this profile.
+
+Add PocketTTS to the shared native server and download the pinned English Q8
+package, including its packaged `embeddings/*.safetensors` voices:
+
+```bash
+./setup.sh --add pocket
+# Stop the running server, then restart it:
+./run-local.sh --kokoro-cpu --port 8001
+```
+
+The common installer keeps the existing model selection, adds PocketTTS, and
+updates the same shared native runtime. `./setup-pocket.sh` is a compatibility
+shortcut. The catalog pins both source and download revisions; the English
+package includes all 26 packaged `embeddings/*.safetensors` voices. Keep the
+embeddings directory beside its GGUF.
+
+The generated configs enable native `pocket-english` and public `pocket-tts`.
+With `--kokoro-cpu`, PocketTTS joins Kokoro in the CPU worker process; other
+character models retain the one-model CUDA residency limit. Plain
+`./run-local.sh` uses the backend/device selected during setup. Existing local
+configs without setup-generated configs retain their configured devices.
+
+If Studio reports `unsupported model family hint: pocket_tts`, the running native
+binary was built without PocketTTS. Run `./setup.sh --add pocket`, stop the running
+server, and restart it. The launcher reuses an already healthy native service,
+so rebuilding alone does not replace that running process.
+
+Select **PocketTTS 100M · English** in Studio's Presets or Clone tab, or send:
+
+```json
+{"model":"pocket-tts","input":"Welcome back, traveler.","voice":"alba","response_format":"wav"}
+```
+
+Studio accepts uploaded reference audio without a transcript. Existing saved NPC
+references can be reused by sending `model: "pocket-tts"` with their `npc_id`;
+creating a new NPC still requires a design-capable profile. Cloning uses the saved
+WAV, including the existing reference selection/extension and recovery paths, and
+does not save Pocket-specific prepared states. Native controls such as
+`text_chunk_tokens`, `max_frames`, and `temperature` come from discovery. Prefer
+`options.max_frames` for output limits: the native legacy `max_tokens` (also reached
+via `max_new_tokens`) means input tokens per text chunk for this family. Offline
+speed changes use FFmpeg. Outputs retain the facade's default 24 kHz mono format.
+
+The weights are **CC-BY-4.0**, attributed to **Kyutai**; see
+[third-party attribution](THIRD_PARTY_NOTICES.md), the
+[upstream model card](https://huggingface.co/kyutai/pocket-tts), and
+[native PocketTTS documentation](https://github.com/0xShug0/audio.cpp/blob/main/docs/tts.md#pockettts).
+Q8 is a GGUF quantization of the original weights. No PocketTTS CPU speed or memory
+budget is inferred from the Ming, Qwen, or Kokoro measurements below.
+
+Reproduce discovery, packaged synthesis, uploaded-reference cloning, and temporary
+saved-NPC reuse against the running CPU native service:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python tests/smoke_pocket.py
+```
+
+Recordings and elapsed/audio timings go to `out/bench/pocket-smoke/`; the check
+validates finite, non-silent audio rather than comparative voice quality.
+
+The [2026-10-24 CPU smoke run](benchmarks/pocket-integration-2026-10-24.json)
+passed all four checks with four threads: preset 0.72 s for 3.36 s audio, reference
+clone 0.74 s for 2.72 s audio, and saved-NPC reuse 0.25 s for 1.36 s audio. These
+are single facade observations (the preset includes first load), not warmed
+medians, memory measurements, text-coverage checks, or voice-quality ratings.
 
 ### Windows FireRedTTS3 pilot
 
@@ -72,7 +144,7 @@ The separate [CrispASR Q4_K package](https://huggingface.co/cstr/fireredtts3-GGU
 ./run-local.sh --port 8001
 ```
 
-This starts audio.cpp on port 7862 if it is not already healthy, then the compatibility API on port 8001. The launcher stops only processes it started. It uses `../Ming/audio.cpp/build/ming-cuda/bin/audiocpp_server`, with character models on GPU 1 and Kokoro Q8 on GPU 0. Offline and streaming Kokoro are separate native model entries and can consume separate memory. Change paths, devices, residency, and threads in `audiocpp-server.local.json` for other machines. Build audio.cpp with `ming3_tts`, `kokoro_tts`, `qwen3_tts`, and `fireredtts3` enabled.
+This starts audio.cpp on port 7862 if it is not already healthy, then the compatibility API on port 8001. The launcher stops only processes it started. It uses `../Ming/audio.cpp/build/ming-cuda/bin/audiocpp_server`, with character models on GPU 1 and Kokoro Q8 on GPU 0. Offline and streaming Kokoro are separate native model entries and can consume separate memory. Change paths, devices, residency, and threads in `audiocpp-server.local.json` for other machines. Build audio.cpp with `ming3_tts`, `kokoro_tts`, `qwen3_tts`, `fireredtts3`, and `pocket_tts` enabled.
 
 Environment overrides: `PYTHON`, `AUDIOCPP_SERVER`, `AUDIOCPP_CONFIG`, `AUDIOCPP_CUDA_LIB`, and `SPEECH_CONFIG`. Native logs go to `audiocpp-backend.log`. `TTS_API_KEY` still enables bearer authentication on the Python API. Separately hosted native services can be configured with `backend_url`, optional native-model-ID `backend_routes`, and `backend_api_key_env` in `backend.json`; it can also be used directly with `python server.py --config backend.json`.
 
@@ -86,9 +158,9 @@ Environment overrides: `PYTHON`, `AUDIOCPP_SERVER`, `AUDIOCPP_CONFIG`, `AUDIOCPP
 
 This mode targets **4 GB cards for Ming** and **6 GB cards for Qwen**, with approximately **3 GiB / 5 GiB available VRAM** respectively after accounting for the desktop and other applications. The default device in this mode is GPU 0, so one GPU is sufficient. Measurements used Q8 models on a 16 GB card; these are planning budgets, not physical 4/6 GB card performance guarantees. Longer outputs can increase memory requirements.
 
-The launcher creates temporary configs in `.cache/launch.*` and starts two native processes: **CUDA on port 7864**, containing all non-Kokoro models with **one resident model**, and **CPU on port 7863**, containing offline and streaming Kokoro. The GPU process swaps checkpoints when you switch between Ming, Qwen design, and Qwen cloning. This is necessary to avoid keeping two large Qwen checkpoints resident on a 6 GB card. The CPU process can keep both Kokoro entries resident in host RAM. No source config is rewritten.
+The launcher creates temporary configs in `.cache/launch.*` and starts two native processes: **CUDA on port 7864**, containing the other character models with **one resident model**, and **CPU on port 7863**, containing offline/streaming Kokoro and PocketTTS. The GPU process swaps checkpoints when you switch between Ming, Qwen design, and Qwen cloning. This is necessary to avoid keeping two large Qwen checkpoints resident on a 6 GB card. The CPU process can keep both Kokoro entries and PocketTTS resident in host RAM. No source config is rewritten.
 
-Native-ID `backend_routes` send both Kokoro entries to CPU for speech, streaming, and voice discovery. Model/parameter discovery merges both native services, so Castward Voice Studio and existing clients use the same public profiles. CPU streaming defaults to `text_chunk_size=80` for earlier first audio, unless the profile already sets a chunk budget. Native thread counts come from `audiocpp-server.local.json` (four in the supplied config). Authentication settings are preserved.
+Native-ID `backend_routes` send both Kokoro entries and PocketTTS to CPU for their supported speech and voice-discovery paths. Model/parameter discovery merges both native services, so Castward Voice Studio and existing clients use the same public profiles. CPU streaming defaults to `text_chunk_size=80` for earlier first audio, unless the profile already sets a chunk budget. Native thread counts come from `audiocpp-server.local.json` (four in the supplied config). Authentication settings are preserved.
 
 Stop the previous launcher before switching modes to release its GPU allocations. CPU mode starts its own services rather than reusing an existing CUDA service whose residency settings may exceed the intended budget. Override the private native ports with `AUDIOCPP_GPU_PORT` and `AUDIOCPP_CPU_PORT` if needed; occupied ports fail before starting either service. Logs are `audiocpp-backend-cpu-mode-gpu.log` and `audiocpp-backend-cpu.log`. The launcher stops only its own child processes and removes temporary configs when the API or either native child exits, including startup failures. `AUDIOCPP_CONFIG`, `SPEECH_CONFIG` (or `--config`), and `AUDIOCPP_SERVER` remain supported. Custom configs already using `backend_routes` should launch their services manually.
 
@@ -100,11 +172,11 @@ Live validation covered UI discovery, offline CPU narration, CPU PCM streaming a
 
 ### Future model candidates (2026-10-23)
 
-These are candidates for separate experiments, not measured or enabled Castward profiles. Compare each against Ming, Qwen, and Kokoro with the same text and reference recordings before changing defaults.
+These are candidates for separate experiments unless an integration is linked below. Compare each against Ming, Qwen, and Kokoro with the same text and reference recordings before changing defaults.
 
 | Candidate | Reason to evaluate | Integration consideration |
 |---|---|---|
-| PocketTTS 100M | Small, clone-capable alternative for CPU character speech; packaged voices and reusable prepared voice states | First test ordinary reference cloning. Persisting prepared states would need an additional Castward voice lifecycle path. Weights are CC-BY-4.0; retain attribution. |
+| PocketTTS 100M | [Integrated English presets and ordinary reference cloning](#pockettts-100m-english-presets-and-reference-cloning), including CPU launch | Prepared-state persistence remains future work. Weights are CC-BY-4.0; see THIRD_PARTY_NOTICES.md. |
 | VoxCPM2 | Design, controllable cloning, 48 kHz output, and native streaming | Design instructions are prepended to the input text, so the generic `instruction_option` mapping is insufficient without adapter work. Measure VRAM and latency before considering it for the shared GPU. Weights are Apache-2.0. |
 | VibeVoice 1.5B | Long-form, multi-speaker audiobook scenes | Requires speaker-labeled scripts and multiple ordered voice references. This is a scene-rendering feature, not a normal single-voice profile. Weights are MIT. |
 | Qwen native streaming | Earlier first audio from checkpoints already installed | Add separate streaming native entries and test the PCM/SSE path; Base streaming needs reference audio, while the current public streaming request path does not supply one. VoiceDesign or CustomVoice may be simpler first tests. |
@@ -281,3 +353,27 @@ Ming's native controls belong to particular templates: `voice_id` uses `ip`; cat
 Use the Ming **Presets** tab and enter a built-in voice such as `US_Emma` or `UK_George`, or enable its Voice ID override. The preset defaults select the `ip` template and map the selected speaker into native `voice_id`. Advanced users can explicitly choose `ip` in the template control; the voice description is then hidden and omitted because that template uses structured controls. Changing templates disables incompatible overrides rather than forwarding them. Incompatible additional JSON options receive a clear client error, and the Python adapter also rejects them with HTTP 400 before calling audio.cpp.
 
 These rules are configuration-driven: `preset_options` supplies preset-mode defaults, `voice_option` maps preset speakers, `option_dependencies` declares allowed combinations, and `instruction_conditions` identifies templates that accept descriptions. They apply to both the UI and adapter without a hardcoded model-family branch.
+
+## Adding a model to the shared installer
+
+The installer reads [model_catalog.json](model_catalog.json). Add an entry with
+its native `family`, public `profiles`, pinned download `repo`/`revision`,
+`local_dir`, native-ID-to-file `weights`, and download `include`/`exclude` patterns.
+`prefer_cpu` makes `--kokoro-cpu` route that family to the CPU worker. Add the
+corresponding native entries in `audiocpp-server.local.json` and public profiles
+in `backend.json`. If the family needs newer native code, update the catalog's
+pinned source revision as well. Existing custom source checkouts are not reset
+by setup; update those deliberately or select a fresh source location.
+
+The shared installer derives compiled families, downloads, profile filtering,
+paths, aliases, and CPU routing from this catalog. Do not add a model-specific
+installer or launch command. Verify every catalog selection with
+`tests/test_setup_models.py`, preview with `./setup.sh --add NAME --plan`, then
+validate live synthesis for that family. Future models with additional sidecar
+files should include them in the catalog's download patterns.
+
+Setup-owned configs are under `.cache/install/`; hand-maintained configs should
+be copied outside that directory and selected through `AUDIOCPP_CONFIG` and
+`SPEECH_CONFIG`. Rerunning setup may regenerate setup-owned configs. Downloads
+and builds complete before new configs are written, so a failed setup keeps the
+previous enabled selection.

@@ -1,0 +1,97 @@
+{
+  "host": "127.0.0.1",
+  "port": 7865,
+  "backend": "cpu",
+  "threads": 4,
+  "lazy_load": true,
+  "max_loaded_models": 1,
+  "models": [
+    {
+      "id": "pocket-english",
+      "family": "pocket_tts",
+      "path": "models/audiocpp-extra/PocketTTS-GGUF/english/pocket-tts-english-q8_0.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "voice_presets": {
+        "alba": {
+          "voice_id": "alba"
+        },
+        "anna": {
+          "voice_id": "anna"
+        },
+        "azelma": {
+          "voice_id": "azelma"
+        },
+        "bill_boerst": {
+          "voice_id": "bill_boerst"
+        },
+        "caro_davy": {
+          "voice_id": "caro_davy"
+        },
+        "charles": {
+          "voice_id": "charles"
+        },
+        "cosette": {
+          "voice_id": "cosette"
+        },
+        "eponine": {
+          "voice_id": "eponine"
+        },
+        "estelle": {
+          "voice_id": "estelle"
+        },
+        "eve": {
+          "voice_id": "eve"
+        },
+        "fantine": {
+          "voice_id": "fantine"
+        },
+        "george": {
+          "voice_id": "george"
+        },
+        "giovanni": {
+          "voice_id": "giovanni"
+        },
+        "jane": {
+          "voice_id": "jane"
+        },
+        "javert": {
+          "voice_id": "javert"
+        },
+        "jean": {
+          "voice_id": "jean"
+        },
+        "juergen": {
+          "voice_id": "juergen"
+        },
+        "lola": {
+          "voice_id": "lola"
+        },
+        "marius": {
+          "voice_id": "marius"
+        },
+        "mary": {
+          "voice_id": "mary"
+        },
+        "michael": {
+          "voice_id": "michael"
+        },
+        "paul": {
+          "voice_id": "paul"
+        },
+        "peter_yearsley": {
+          "voice_id": "peter_yearsley"
+        },
+        "rafael": {
+          "voice_id": "rafael"
+        },
+        "stuart_bell": {
+          "voice_id": "stuart_bell"
+        },
+        "vera": {
+          "voice_id": "vera"
+        }
+      }
+    }
+  ]
+}

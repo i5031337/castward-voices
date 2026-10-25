@@ -15,7 +15,7 @@ class ModelProfile(BaseModel):
     streaming_sample_rate: int | None = Field(default=None, gt=0)
     streaming_channels: int = Field(default=1, gt=0)
     instruction_option: str | None = None
-    reference_text_option: str = "reference_text"
+    reference_text_option: str | None = "reference_text"
     speaker_only_option: str | None = None
     seed_max: int = Field(default=2**64-1, ge=0, le=2**64-1)
     language_option: str | None = "language"

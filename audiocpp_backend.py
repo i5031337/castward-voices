@@ -117,7 +117,7 @@ class AudioCppBackend:
             stream = io.BytesIO()
             sf.write(stream, waveform, rate, format="WAV", subtype="PCM_16")
             request["voice_ref"] = {"type": "base64", "data": base64.b64encode(stream.getvalue()).decode("ascii")}
-            if reference_text:
+            if reference_text and profile.reference_text_option:
                 opts[profile.reference_text_option] = reference_text
             elif profile.speaker_only_option:
                 opts.setdefault(profile.speaker_only_option, True)
