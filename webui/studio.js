@@ -235,9 +235,12 @@ function selectMode(mode) {
 function selectModel() {
   const p = profile(); if (!p) return;
   const voiceIDs = new Set([...(p.voices || []), ...Object.keys(p.voice_aliases), ...Object.values(p.voice_aliases), ...Object.keys(p.voice_descriptions)]);
-  const voiceParam = nativeModel(p, 'speech')?.params?.find((param) => param.name === 'voice_id');
+  if (p.default_voice) voiceIDs.add(p.default_voice);
+  const voiceParam = nativeModel(p, 'speech')?.params?.find((param) => param.name === (p.voice_option || 'voice_id'));
   for (const voice of voiceParam?.values || []) voiceIDs.add(voice);
-  $('voice-list').replaceChildren(...[...voiceIDs].sort().map((voice) => { const option = document.createElement('option'); option.value = voice; return option; }));
+  const defaultOption = create('option', '', p.default_voice ? `Model default (${p.default_voice})` : 'Model default');
+  defaultOption.value = '';
+  $('voice').replaceChildren(defaultOption, ...[...voiceIDs].filter(Boolean).sort().map((voice) => { const option = create('option', '', voice); option.value = voice; return option; }));
   $('voice').value = '';
   $('language-list').replaceChildren(...[...new Set(['Auto', 'English', ...Object.keys(p.language_map), ...Object.values(p.language_map).filter(Boolean)])].map((lang) => { const option = document.createElement('option'); option.value = lang; return option; }));
   selectMode(state.mode);
