@@ -1,11 +1,78 @@
-"""Prepare temporary configs for CPU Kokoro/PocketTTS and CUDA character speech."""
+"""Prepare temporary native and API configurations for local launch modes."""
 import argparse
 import copy
 import json
 from pathlib import Path
 import socket
 
-from backend_config import load_config
+from backend_config import ServerConfig, load_config
+
+
+def prepare_cpu_configs(native_path, speech_path, output_dir, *, cpu_port=7863, threads=8):
+    """CPU-only workflow: existing designer, PocketTTS cloning and narration."""
+    if not 1 <= cpu_port <= 65535 or threads < 1:
+        raise ValueError("CPU port must be between 1 and 65535 and threads must be positive")
+    native_path = Path(native_path).resolve()
+    native = json.loads(native_path.read_text())
+    settings = load_config(speech_path)
+    if settings.backend_routes:
+        raise ValueError("--cpu expects one source backend; remove custom backend_routes or launch those services manually")
+    native_ids = {m['id'] for m in native['models'] if m.get('family') == 'pocket_tts'}
+    pocket = next((p for p in settings.models.values()
+                   if p.backend_model in native_ids and p.clone_model in native_ids), None)
+    designer = settings.models.get('npc', settings.models[settings.default_model])
+    if pocket is None:
+        raise ValueError("--cpu requires an installed PocketTTS model and cloning profile; add PocketTTS first")
+    if not designer.design_model:
+        raise ValueError("--cpu requires a voice designer in the npc or default profile")
+    if designer.design_model not in {m['id'] for m in native['models']}:
+        raise ValueError("--cpu voice designer is missing from the native model config")
+    # Start with Pocket's options so designer templates never leak into cloning.
+    hybrid = pocket.model_copy(deep=True)
+    hybrid.design_model = designer.design_model
+    hybrid.instruction_option = designer.instruction_option
+    hybrid.design_options = designer.options_for('design')
+    if designer.language_option:
+        hybrid.design_options.setdefault(designer.language_option, designer.language_map.get('English', 'English'))
+    hybrid.instruction_conditions = copy.deepcopy(designer.instruction_conditions)
+    hybrid.option_dependencies = copy.deepcopy(designer.option_dependencies)
+    hybrid.mode_conditions['design'] = copy.deepcopy(designer.mode_conditions.get('design', {}))
+    hybrid.seed_max = min(pocket.seed_max, designer.seed_max)
+    hybrid.max_input_chars = min(pocket.max_input_chars, designer.max_input_chars)
+    hybrid.display_name = "CPU characters · voice design + PocketTTS"
+    hybrid.description = "Design a new character on CPU, then use PocketTTS for English reference cloning and packaged voices."
+    settings.models['npc'] = hybrid
+    settings.models['narrator'] = pocket.model_copy(deep=True, update={
+        'display_name': 'CPU narration · PocketTTS',
+        'description': 'PocketTTS English narration with packaged voices. Non-streaming.',
+    })
+    settings.default_model = 'npc'
+    settings.backend_url = f'http://127.0.0.1:{cpu_port}'
+    native.update(host='127.0.0.1', port=cpu_port, backend='cpu', threads=threads,
+                  lazy_load=True, max_loaded_models=2)
+    native.pop('device', None)
+    for model in native['models']:
+        model.pop('device', None)
+        model['lazy'] = True
+    resolve_model_paths(native['models'], native_path.parent)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / 'cpu.json').write_text(json.dumps(native, indent=2) + '\n')
+    # Validate generated profiles as well as source profiles before starting services.
+    speech = ServerConfig.model_validate(settings.model_dump())
+    (output_dir / 'backend.json').write_text(speech.model_dump_json(indent=2) + '\n')
+
+
+def resolve_model_paths(models, source_dir):
+    for model in models:
+        for key in ('path', 'model_spec_override'):
+            if model.get(key) and model[key] != 'embedded':
+                path = Path(model[key])
+                model[key] = str(path if path.is_absolute() else source_dir / path)
+        for preset in model.get('voice_presets', {}).values():
+            if isinstance(preset.get('voice_ref'), str):
+                path = Path(preset['voice_ref'])
+                preset['voice_ref'] = str(path if path.is_absolute() else source_dir / path)
 
 
 def prepare_configs(native_path, speech_path, output_dir, *, gpu_device=0, gpu_port=7864, cpu_port=7863):
@@ -20,15 +87,7 @@ def prepare_configs(native_path, speech_path, output_dir, *, gpu_device=0, gpu_p
         raise ValueError("--kokoro-cpu expects one source backend; remove custom backend_routes or launch those services manually")
     models = copy.deepcopy(native["models"])
     # Native model paths are relative to the source config, not the temporary directory.
-    for model in models:
-        for key in ("path", "model_spec_override"):
-            if model.get(key) and model[key] != "embedded":
-                path = Path(model[key])
-                model[key] = str(path if path.is_absolute() else native_path.parent / path)
-        for preset in model.get("voice_presets", {}).values():
-            if isinstance(preset.get("voice_ref"), str):
-                path = Path(preset["voice_ref"])
-                preset["voice_ref"] = str(path if path.is_absolute() else native_path.parent / path)
+    resolve_model_paths(models, native_path.parent)
     catalog = json.loads((Path(__file__).parent / "model_catalog.json").read_text())
     cpu_families = {model["family"] for model in catalog["models"].values() if model.get("prefer_cpu")}
     cpu_models = [model for model in models if model.get("family") in cpu_families]
@@ -67,6 +126,9 @@ def check_ports(*ports):
         for port in ports:
             sock = socket.socket()
             sockets.append(sock)
+            # A stopped HTTP service can leave connections in TIME_WAIT. Permit
+            # immediate relaunch while still rejecting an active listener.
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(("127.0.0.1", port))
     except OSError as exc:
         raise ValueError(f"CPU/GPU native port is occupied: {exc}. Set AUDIOCPP_GPU_PORT and AUDIOCPP_CPU_PORT to unused ports.") from exc
@@ -83,13 +145,20 @@ def main():
     parser.add_argument("--gpu-device", type=int, default=0)
     parser.add_argument("--gpu-port", type=int, default=7864)
     parser.add_argument("--cpu-port", type=int, default=7863)
+    parser.add_argument("--cpu", action="store_true")
+    parser.add_argument("--threads", type=int, default=8)
     args = parser.parse_args()
     try:
-        prepare_configs(args.native_config, args.speech_config, args.output_dir,
-                        gpu_device=args.gpu_device, gpu_port=args.gpu_port, cpu_port=args.cpu_port)
-        check_ports(args.gpu_port, args.cpu_port)
+        if args.cpu:
+            prepare_cpu_configs(args.native_config, args.speech_config, args.output_dir,
+                                cpu_port=args.cpu_port, threads=args.threads)
+            check_ports(args.cpu_port)
+        else:
+            prepare_configs(args.native_config, args.speech_config, args.output_dir,
+                            gpu_device=args.gpu_device, gpu_port=args.gpu_port, cpu_port=args.cpu_port)
+            check_ports(args.gpu_port, args.cpu_port)
     except (ValueError, OSError) as exc:
-        parser.exit(1, f"Cannot launch CPU Kokoro: {exc}\n")
+        parser.exit(1, f"Cannot prepare native launch: {exc}\n")
 
 
 if __name__ == "__main__":

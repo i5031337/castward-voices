@@ -168,6 +168,49 @@ Without `--kokoro-cpu`, startup and the existing GPU narration configuration are
 
 Live validation covered UI discovery, offline CPU narration, CPU PCM streaming alongside Ming design/cloning and Qwen design/both cloning sizes, and checkpoint eviction. The CUDA process peaked at **4.05 GiB** across those workloads; the CPU process showed **zero GPU allocation**. Terminating a native child verified cleanup of both native processes, the facade, and temporary configs while the original server remained running. See [`benchmarks/cpu-kokoro-launch-validation-2026-10-22.json`](benchmarks/cpu-kokoro-launch-validation-2026-10-22.json).
 
+## CPU-only character workflow
+
+```bash
+./run-local.sh --cpu
+```
+
+This uses installed weights and the existing native executable; no setup rerun
+or downloads are needed when PocketTTS is already installed. All enabled native
+models run on CPU, with CUDA devices hidden from the native process. The default
+`npc` profile designs new characters with its configured designer (normally Ming)
+and uses PocketTTS for subsequent reference cloning. Requests with `npc_id` and
+`instructions` create the first recording; subsequent requests with the same
+`npc_id` use the saved reference through PocketTTS. Existing saved NPC references
+also work. The `npc` Presets mode and `narrator` profile use PocketTTS packaged
+voices (default `alba`). PocketTTS output is English; this mode does not enable
+PocketTTS streaming or contextual narration.
+
+The other model-specific profiles remain available on CPU. In Voice Studio, use
+`npc` for the combined design/clone workflow, or choose a specific larger model
+for design and reuse the downloaded recording in PocketTTS Clone mode. Explicit
+model-specific profiles retain their original cloning backends.
+
+The launcher generates temporary configs, starts its own CPU native service on
+port 7863, and removes its configs and stops its children on exit. It does not
+reuse an existing GPU service or rewrite source configs. Stop the previous
+launcher before switching modes to release its allocations. This mode requires
+a configured PocketTTS cloning profile plus a voice designer in `npc` (or the
+default profile); missing dependencies produce a startup error. Custom
+`backend_routes` and combining `--cpu` with `--kokoro-cpu` are rejected.
+
+Eight native threads are used by default. Override with
+`AUDIOCPP_CPU_THREADS=4 ./run-local.sh --cpu`, or choose another native port with
+`AUDIOCPP_CPU_PORT`. Model loading is lazy, with at most two native entries
+resident in system RAM. Larger checkpoints still need adequate host RAM.
+
+On the Ryzen 7 5800X3D, Ming Q8 voice design at eight threads generated a
+2.9-second line in 2.61 seconds and a 12.2-second paragraph in 9.99 seconds
+(medians of three warmed requests). The same passages at four threads had RTF
+1.18/1.10, versus 0.90/0.82 at eight threads. A CPU-only launcher smoke test
+covered UI discovery, new-character design, reference preparation, PocketTTS
+cloning, narration, and shutdown. These are sample workloads, not universal
+latency or voice-quality guarantees.
+
 ## Replace models through configuration
 
 ### Future model candidates (2026-10-23)

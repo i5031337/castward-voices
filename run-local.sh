@@ -17,10 +17,12 @@ cpu_pid=""
 facade_pid=""
 runtime_dir=""
 kokoro_cpu=0
+all_cpu=0
 gpu_device=0
 facade_args=()
 while (($#)); do
     case "$1" in
+        --cpu) all_cpu=1; shift ;;
         --kokoro-cpu) kokoro_cpu=1; shift ;;
         --gpu-device)
             if (($# < 2)); then echo '--gpu-device requires an index' >&2; exit 2; fi
@@ -31,7 +33,8 @@ while (($#)); do
         --config=*) speech_config="${1#--config=}"; shift ;;
         -h|--help)
             echo 'Castward Voices · local speech server'
-            echo 'Usage: ./run-local.sh [--kokoro-cpu] [--gpu-device INDEX] [server.py options]'
+            echo 'Usage: ./run-local.sh [--cpu | --kokoro-cpu] [--gpu-device INDEX] [server.py options]'
+            echo '  --cpu              All models on CPU; voice design + PocketTTS cloning/narration'
             echo '  --kokoro-cpu       CPU Kokoro/PocketTTS + CUDA character speech, one resident GPU model'
             echo '  --gpu-device INDEX GPU for CPU-narration mode (default: 0)'
             echo '  --port PORT        Compatibility API port (default: 8001)'
@@ -39,6 +42,10 @@ while (($#)); do
         *) facade_args+=("$1"); shift ;;
     esac
 done
+if ((all_cpu && kokoro_cpu)); then
+    echo '--cpu and --kokoro-cpu cannot be combined' >&2
+    exit 2
+fi
 cleanup() {
     if [[ -n "$facade_pid" ]]; then kill "$facade_pid" 2>/dev/null || true; fi
     if [[ -n "$cpu_pid" ]]; then kill "$cpu_pid" 2>/dev/null || true; fi
@@ -75,7 +82,18 @@ with httpx.Client(timeout=1) as client:
         raise SystemExit(f'audio.cpp did not become ready; see {logfile}')
 PY
 }
-if ((kokoro_cpu)); then
+if ((all_cpu)); then
+    mkdir -p "$PWD/.cache"
+    runtime_dir="$(mktemp -d "$PWD/.cache/launch.XXXXXX")"
+    cpu_port="${AUDIOCPP_CPU_PORT:-7863}"
+    "$speech_python" launch_config.py "$native_config" "$speech_config" "$runtime_dir" \
+        --cpu --cpu-port "$cpu_port" --threads "${AUDIOCPP_CPU_THREADS:-8}"
+    speech_config="$runtime_dir/backend.json"
+    CUDA_VISIBLE_DEVICES="" "$native_binary" --config "$runtime_dir/cpu.json" --no-ui > audiocpp-backend-cpu.log 2>&1 &
+    cpu_pid=$!
+    wait_native "http://127.0.0.1:$cpu_port" "$cpu_pid" cpu audiocpp-backend-cpu.log
+    echo "CPU-only: voice design + PocketTTS character cloning/narration (${AUDIOCPP_CPU_THREADS:-8} threads)"
+elif ((kokoro_cpu)); then
     mkdir -p "$PWD/.cache"
     runtime_dir="$(mktemp -d "$PWD/.cache/launch.XXXXXX")"
     gpu_port="${AUDIOCPP_GPU_PORT:-7864}"
