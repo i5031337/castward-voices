@@ -92,9 +92,10 @@ class AudioCppBackend:
         if options:
             opts.update(options)
         # Only explicit sampling parameters are sent; each model keeps its defaults.
-        for attribute, key in (("temperature", "temperature"), ("max_new_tokens", "max_tokens")):
+        for attribute, key in (("temperature", "temperature"),
+                               ("max_new_tokens", profile.max_tokens_option)):
             value = getattr(body, attribute, None)
-            if value is not None:
+            if key is not None and value is not None:
                 opts[key] = value
         request = {"model": model, "input": body.input if text is None else text,
                    "response_format": "wav", "options": opts}

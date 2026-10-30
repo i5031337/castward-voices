@@ -28,7 +28,7 @@ Select **FireRedTTS3 Instruct** in Studio for Design or Clone, or send `model: "
 
 Design uses `template_name=voice_design`; Clone uses `instruct_tts`. The profile's `mode_conditions` restrict each mode to its compatible template in both the adapter and Studio. Semantic/acoustic editing requires native input-audio fields that this speech UI/API does not expose. Cloning accepts the reference transcript; complete short NPC recordings also supply their known transcript during extension. Cropped or possibly truncated recordings do not receive a guessed transcript. FireRed has no native streaming entry; PCM downloads are supported, while `stream: true` is rejected.
 
-Native discovery supplies the flow-step, guidance, stop-threshold, and text-chunk controls. Untouched controls retain native defaults, including ten inference steps. Seeds use `0..4294967295`. Language names retain FireRed's capitalization; `Auto` maps to English, and native dialect tags can be entered directly. See the [native FireRed guide](https://github.com/0xShug0/audio.cpp/blob/main/docs/models/fireredtts3.md) for supported tags and model limitations. The earlier Ming/Qwen memory budgets do not establish a FireRed Q8 budget.
+Native discovery supplies the flow-step, guidance, stop-threshold, and text-chunk controls. Untouched controls retain native defaults, including ten inference steps. The facade omits `max_new_tokens` for FireRed because its native options do not include `max_tokens`. Seeds use `0..4294967295`. Language names retain FireRed's capitalization; `Auto` maps to English, and native dialect tags can be entered directly. See the [native FireRed guide](https://github.com/0xShug0/audio.cpp/blob/main/docs/models/fireredtts3.md) for supported tags and model limitations. The earlier Ming/Qwen memory budgets do not establish a FireRed Q8 budget.
 
 Reproduce the live design/clone/preset/NPC checks against a running FireRed-capable native service:
 
@@ -234,7 +234,7 @@ To change architectures, add or replace the model entries in audio.cpp's configu
 
 * `backend_model`, `design_model`, `clone_model`, and `streaming_model` select native entries and capabilities. Omit unsupported capabilities.
 * `instruction_option`, `reference_text_option`, `language_option`, and `language_map` translate profile-specific option names. Set `language_option` to null if the architecture does not accept it.
-* `options`, `design_options`, `clone_options`, and `streaming_options` supply native generation options. Request `options` can override them. Explicit `temperature` and `max_new_tokens` map to native `temperature` and `max_tokens`; omitted fields leave native defaults intact.
+* `options`, `design_options`, `clone_options`, and `streaming_options` supply native generation options. Request `options` can override them. Explicit `temperature` maps to native `temperature`; `max_new_tokens` maps to `max_tokens` by default. Set `max_tokens_option` to null for a model such as FireRedTTS3 that does not support it. Omitted fields leave native defaults intact.
 * `voice_aliases`, `voice_descriptions`, and `default_voice` define compatibility voices. Descriptions request voice design; presets pass a native voice ID.
 * `native_speed` selects native speed control. Otherwise the facade uses FFmpeg for non-streaming tempo changes. Streaming speed changes require native support.
 * `streaming_sample_rate` and `streaming_channels` describe native PCM. They must match the native model; WAV sample rates are read from their headers.

@@ -30,16 +30,19 @@ class ModelProfileTests(unittest.TestCase):
         config=load_config(Path(__file__).resolve().parents[1]/'backend-firered.json')
         profile=config.models['fireredtts3']
         backend=AudioCppBackend(config)
-        body=SpeechRequest(model='fireredtts3',input='The gate is open.',language='English',seed=42)
+        body=SpeechRequest(model='fireredtts3',input='The gate is open.',language='English',seed=42,
+                           max_new_tokens=128)
         design=backend.payload(profile,body,mode='design',instruction='An older, gravelly guard')
         self.assertEqual(design['model'],'firered-instruct')
         self.assertEqual(design['options']['template_name'],'voice_design')
         self.assertEqual(design['options']['instruct'],'An older, gravelly guard')
         self.assertEqual(design['options']['language'],'English')
+        self.assertNotIn('max_tokens',design['options'])
         reference=(np.ones(2400)*0.1,24000)
         clone=backend.payload(profile,body,mode='clone',reference=reference,reference_text='The gate is open.')
         self.assertEqual(clone['options']['template_name'],'instruct_tts')
         self.assertEqual(clone['options']['reference_text'],'The gate is open.')
+        self.assertNotIn('max_tokens',clone['options'])
         self.assertIn('voice_ref',clone)
         backend.close()
 

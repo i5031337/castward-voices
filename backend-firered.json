@@ -6,6 +6,7 @@
   "models": {
     "fireredtts3": {
       "backend_model": "firered-instruct",
+      "max_tokens_option": null,
       "design_model": "firered-instruct",
       "clone_model": "firered-instruct",
       "instruction_option": "instruct",

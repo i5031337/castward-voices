@@ -39,6 +39,8 @@ class FireRedTests(unittest.TestCase):
                 return httpx.Response(200, json={'voices': []})
             payload = json.loads(request.content)
             self.calls.append(payload)
+            if 'max_tokens' in payload['options']:
+                return httpx.Response(400, json={'error': 'FireRedTTS3 does not support max_tokens'})
             seconds = 1 if payload['input'] == 'Hi.' else 5
             audio = np.sin(np.arange(seconds * 24000) * .1) * .1
             stream = io.BytesIO()
@@ -78,17 +80,21 @@ class FireRedTests(unittest.TestCase):
     def test_studio_design_clone_options_and_invalid_templates(self):
         response = self.client.post('/ui/generate', json={'mode': 'design', 'speech': {
             'model': 'fireredtts3', 'input': 'Welcome to the gate.', 'instructions': 'A gravelly guard',
-            'seed': 4294967295, 'options': {'num_inference_steps': 4, 'guidance_scale': 1.5}}})
+            'seed': 4294967295, 'max_new_tokens': 128,
+            'options': {'num_inference_steps': 4, 'guidance_scale': 1.5}}})
         self.assertEqual(response.status_code, 200, response.text)
         take = response.json()
         self.assertEqual(self.calls[-1]['seed'], '4294967295')
         self.assertEqual(self.calls[-1]['options']['num_inference_steps'], 4)
+        self.assertNotIn('max_tokens', self.calls[-1]['options'])
         clone = {'mode': 'clone', 'reference_audio': take['reference_audio'], 'reference_text': take['transcript'],
-                 'speech': {'model': 'fireredtts3', 'input': 'You may pass.', 'options': {'stop_threshold': .4}}}
+                 'speech': {'model': 'fireredtts3', 'input': 'You may pass.',
+                            'max_new_tokens': 128, 'options': {'stop_threshold': .4}}}
         response = self.client.post('/ui/generate', json=clone)
         self.assertEqual(response.status_code, 200, response.text)
         payload = self.calls[-1]
         self.assertEqual(payload['options']['template_name'], 'instruct_tts')
+        self.assertNotIn('max_tokens', payload['options'])
         self.assertEqual(payload['options']['reference_text'], take['transcript'])
         self.assertEqual(base64.b64decode(payload['voice_ref']['data'])[:4], b'RIFF')
         self.assertNotIn('instruct', payload['options'])
@@ -103,19 +109,23 @@ class FireRedTests(unittest.TestCase):
         self.assertEqual(len(self.calls), count)
 
     def test_short_npc_reference_extension_and_persistent_reuse(self):
-        response = self.speech(npc_id='firered-guard', input='Hi.', instructions='An older guard')
+        response = self.speech(npc_id='firered-guard', input='Hi.', instructions='An older guard',
+                               max_new_tokens=128)
         self.assertEqual(response.status_code, 200, response.text)
         design, extension = self.calls
         self.assertEqual(design['options']['template_name'], 'voice_design')
         self.assertEqual(extension['options']['template_name'], 'instruct_tts')
         self.assertEqual(extension['options']['reference_text'], 'Hi.')
+        self.assertNotIn('max_tokens', design['options'])
+        self.assertNotIn('max_tokens', extension['options'])
         folder = Path(self.storage.name) / hashlib.sha256(b'firered-guard').hexdigest()
         metadata = json.loads((folder / 'metadata.json').read_text())
         self.assertEqual(metadata['status'], 'ready')
         self.assertEqual(metadata['model'], 'fireredtts3')
         original = (folder / 'reference.wav').read_bytes()
-        response = self.speech(npc_id='firered-guard')
+        response = self.speech(npc_id='firered-guard', max_new_tokens=128)
         self.assertEqual(response.status_code, 200, response.text)
+        self.assertNotIn('max_tokens', self.calls[-1]['options'])
         self.assertEqual(self.calls[-1]['options']['reference_text'], metadata['ref_text'])
         self.assertEqual(original, (folder / 'reference.wav').read_bytes())
         self.assertEqual(len(self.calls), 3)

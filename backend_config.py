@@ -17,6 +17,7 @@ class ModelProfile(BaseModel):
     instruction_option: str | None = None
     reference_text_option: str | None = "reference_text"
     speaker_only_option: str | None = None
+    max_tokens_option: str | None = "max_tokens"
     seed_max: int = Field(default=2**64-1, ge=0, le=2**64-1)
     language_option: str | None = "language"
     language_map: dict[str, str | None] = Field(default_factory=dict)

@@ -90,6 +90,14 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(request['options']['reference_text'],'Reference')
         backend.close()
 
+    def test_max_new_tokens_maps_to_supported_native_option(self):
+        config = settings()
+        backend = AudioCppBackend(config)
+        body = SpeechRequest(model='actor', input='Hello', max_new_tokens=128)
+        request = backend.payload(config.models['actor'], body, mode='design', instruction='A voice')
+        self.assertEqual(request['options']['max_tokens'], 128)
+        backend.close()
+
     def test_generation_checks_status_and_rejects_invalid_waveform(self):
         def handle(request):
             return httpx.Response(400,json={'error':{'message':'Unsupported language'}})
