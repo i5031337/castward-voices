@@ -16,6 +16,7 @@ import numpy as np
 import soundfile as sf
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.background import BackgroundTask
@@ -134,6 +135,12 @@ def create_app(*, config=None, config_path=None, backend=None, voices_dir="voice
                     app.state.backend.close()
 
     app = FastAPI(title="Castward Voices", description="Persistent character voices and narration for Castward, with Castward Voice Studio.", lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://127.0.0.1:8000", "http://localhost:8000"],
+        allow_methods=["GET"],
+        allow_headers=["Authorization"],
+    )
 
     async def authenticate(request: Request):
         if api_key and not secrets.compare_digest(request.headers.get("authorization", "").encode(), f"Bearer {api_key}".encode()):

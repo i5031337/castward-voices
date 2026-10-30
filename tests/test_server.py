@@ -130,6 +130,30 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.request(voice=voice).status_code,200)
         self.assertEqual(self.request(model='reader',voice=voice).status_code,400)
 
+    def test_catalog_cors_for_sillytavern_origins(self):
+        for origin in ('http://127.0.0.1:8000', 'http://localhost:8000'):
+            for path in ('/v1/models', '/v1/voices'):
+                with self.subTest(origin=origin, path=path):
+                    response = self.client.get(path, headers={
+                        'Origin': origin, 'Authorization': 'Bearer key'})
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(response.headers.get('access-control-allow-origin'), origin)
+                    self.assertEqual(response.json()['object'], 'list')
+
+            preflight = self.client.options('/v1/models', headers={
+                'Origin': origin,
+                'Access-Control-Request-Method': 'GET',
+                'Access-Control-Request-Headers': 'Authorization',
+            })
+            self.assertEqual(preflight.status_code, 200, preflight.text)
+            self.assertEqual(preflight.headers.get('access-control-allow-origin'), origin)
+            self.assertIn('authorization', preflight.headers['access-control-allow-headers'].lower())
+
+        blocked = self.client.get('/v1/models', headers={
+            'Origin': 'http://example.com', 'Authorization': 'Bearer key'})
+        self.assertEqual(blocked.status_code, 200)
+        self.assertNotIn('access-control-allow-origin', blocked.headers)
+
     def test_streaming_real_chunks_and_context_fallback(self):
         r=self.request(model='reader',stream=True,response_format='pcm')
         self.assertEqual(r.status_code,200,r.text)
