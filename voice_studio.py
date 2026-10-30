@@ -17,7 +17,7 @@ from fastapi import Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
-from audio_utils import mono_audio, resample
+from audio_utils import OutputNormalizer, mono_audio, resample
 
 MAX_REFERENCE_BYTES = 5 * 1024 * 1024
 log = logging.getLogger("speech.studio")
@@ -145,6 +145,8 @@ def register_studio(app, settings, authenticate, SpeechRequest, encode_audio):
                 native_duration = len(audio) / rate
                 reference = encode_audio(audio, rate, "wav", 1)
                 converted = resample(audio, rate, settings.output_sample_rate)
+                if settings.output_level_dbfs is not None:
+                    converted = OutputNormalizer(settings.output_sample_rate, settings.output_level_dbfs).apply(converted)
                 tempo = 1 if profile.native_speed else request.speed
                 preview = encode_audio(converted, settings.output_sample_rate, "wav", tempo)
                 download = preview if request.response_format == "wav" else encode_audio(converted, settings.output_sample_rate, request.response_format, tempo)

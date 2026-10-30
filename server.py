@@ -21,7 +21,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.background import BackgroundTask
 from audiocpp_backend import AudioCppBackend
-from audio_utils import resample
+from audio_utils import OutputNormalizer, resample
 from backend_config import ServerConfig, load_config
 from npc_tts import SpeechEngine
 from sillynpc_bridge import decode_sillynpc_voice
@@ -212,19 +212,24 @@ def create_app(*, config=None, config_path=None, backend=None, voices_dir="voice
         else:
             audio, rate = app.state.engine.generate(body, model_id, profile)
         audio = resample(audio, rate, settings.output_sample_rate)
+        if settings.output_level_dbfs is not None:
+            audio = OutputNormalizer(settings.output_sample_rate, settings.output_level_dbfs).apply(audio)
         encoded = encode_audio(audio, settings.output_sample_rate, body.response_format, 1.0 if profile.native_speed else body.speed)
         status = app.state.engine.status(body.npc_id) if body.npc_id else None
         return encoded, status, context_status
 
-    def next_pcm(iterator):
+    def next_pcm(iterator, normalizer):
         audio = next(iterator, None)
-        return None if audio is None else encode_audio(audio, settings.output_sample_rate, "pcm", 1.0)
+        return None if audio is None else encode_audio(
+            normalizer.apply(audio) if normalizer else audio, settings.output_sample_rate, "pcm", 1.0)
 
     async def stream_response(body, profile, executor):
         iterator = app.state.backend.stream(profile, body)
+        normalizer = (OutputNormalizer(settings.output_sample_rate, settings.output_level_dbfs)
+                      if settings.output_level_dbfs is not None else None)
         loop = asyncio.get_running_loop()
         try:
-            first = await loop.run_in_executor(executor, next_pcm, iterator)
+            first = await loop.run_in_executor(executor, next_pcm, iterator, normalizer)
             if first is None:
                 raise ValueError("Backend produced no audio")
         except BaseException:
@@ -233,7 +238,7 @@ def create_app(*, config=None, config_path=None, backend=None, voices_dir="voice
         async def chunks():
             yield first
             while True:
-                chunk = await loop.run_in_executor(executor, next_pcm, iterator)
+                chunk = await loop.run_in_executor(executor, next_pcm, iterator, normalizer)
                 if chunk is None:
                     return
                 yield chunk

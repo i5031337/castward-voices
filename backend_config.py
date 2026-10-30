@@ -76,6 +76,7 @@ class ServerConfig(BaseModel):
     backend_timeout: float = Field(default=180, gt=0)
     backend_api_key_env: str | None = None
     output_sample_rate: int = Field(default=24000, gt=0)
+    output_level_dbfs: float | None = Field(default=-20.0, ge=-35, le=-10)
     default_model: str
     aliases: dict[str, str] = Field(default_factory=dict)
     models: dict[str, ModelProfile]

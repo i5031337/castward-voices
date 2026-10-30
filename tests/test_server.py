@@ -11,6 +11,7 @@ import unittest
 import numpy as np
 import soundfile as sf
 from fastapi.testclient import TestClient
+from audio_utils import OutputNormalizer
 from server import create_app
 
 
@@ -44,6 +45,17 @@ class FakeBackend:
 
 
 class ServerTests(unittest.TestCase):
+    def test_output_normalizer_matches_quiet_and_loud_speech_without_clipping(self):
+        rate = 24000
+        tone = np.sin(np.arange(rate) * 2 * np.pi * 220 / rate).astype(np.float32)
+        quiet = np.concatenate((np.zeros(rate), tone * 0.04, np.zeros(rate)))
+        loud = np.concatenate((np.zeros(rate), tone * 0.3, np.zeros(rate)))
+        outputs = [OutputNormalizer(rate).apply(audio) for audio in (quiet, loud)]
+        levels = [np.sqrt(np.mean(output[rate:2*rate] ** 2)) for output in outputs]
+        self.assertLess(abs(20 * np.log10(levels[0] / levels[1])), 1)
+        self.assertTrue(all(np.max(np.abs(output)) <= 10 ** (-1 / 20) + 1e-6 for output in outputs))
+        self.assertTrue(np.all(outputs[0][:rate] == 0))
+
     def setUp(self):
         self.storage=tempfile.TemporaryDirectory();self.backend=FakeBackend()
         self.start()
@@ -65,6 +77,19 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.backend.calls[-1][1]['instruction'],'A guard')
         self.assertEqual(self.backend.calls[-1][0].options,{'future_option':7})
         self.assertEqual(self.request(model='tts-1').status_code,200)
+
+    def test_npc_output_is_normalized_but_saved_reference_source_is_raw(self):
+        original = self.backend.generate
+        def quiet(profile, body, **kwargs):
+            audio, rate = original(profile, body, **kwargs)
+            return audio * 0.4, rate
+        self.backend.generate = quiet
+        response = self.request(npc_id='guard', instructions='A guard')
+        self.assertEqual(response.status_code, 200, response.text)
+        output, _ = sf.read(io.BytesIO(response.content))
+        saved, _ = sf.read(self.folder() / 'dialogue.wav')
+        self.assertGreater(np.sqrt(np.mean(output ** 2)), 2 * np.sqrt(np.mean(saved ** 2)))
+        self.assertLessEqual(np.max(np.abs(output)), 10 ** (-1 / 20) + 1e-4)
 
     def test_create_reuse_restart_and_legacy_reference_ignore_feature_cache(self):
         first=self.request(npc_id='guard',instructions='A guard')
