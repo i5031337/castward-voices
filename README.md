@@ -6,23 +6,39 @@ Local voice design, cloning, and narration for the **Castward SillyTavern RPG ex
 
 ## Setup
 
-Install [uv](https://docs.astral.sh/uv/), Git, a C/C++ compiler, and CMake 3.20 or
-newer. For NVIDIA GPU synthesis, also install the CUDA toolkit and a working GPU
-driver. FFmpeg is needed for Opus, AAC, and playback tempo changes. The commands
-below are for Linux; run them from this repository's directory.
+Install [uv](https://docs.astral.sh/uv/). FFmpeg is needed for Opus, AAC, and
+playback tempo changes. Run the commands below from this repository's directory.
+Linux source builds also need Git, a C/C++ compiler, and CMake 3.20 or newer; CUDA
+builds need the CUDA toolkit and a working NVIDIA driver.
+
+On Linux:
 
 ```bash
 ./setup.sh
 ./run-local.sh --kokoro-cpu
 ```
 
+On Windows, run from Command Prompt or PowerShell (prefix the names with `.\` in
+PowerShell):
+
+```bat
+setup.bat
+run-local.bat --kokoro-cpu
+```
+
+Windows setup downloads the pinned audio.cpp v0.9.4 server and its matching CUDA
+runtime DLLs, verifies SHA-256 hashes, and extracts them under `.cache/audio.cpp-prebuilt/`.
+GPU use still needs a compatible NVIDIA GPU and driver. `setup.bat --cpu` selects the
+CPU release and needs no NVIDIA software; follow it with `run-local.bat` (without
+`--kokoro-cpu`). `setup.bat --add pocket` and `setup.bat --plan` work like their Linux
+equivalents. The pinned archive names and checksums are in `windows_prebuilt.json`.
+
 Open **<http://127.0.0.1:8001/>** for Castward Voice Studio.
 
-Setup installs Python dependencies, obtains the pinned audio.cpp source if needed,
-builds one shared native runtime, downloads the default **Ming + Kokoro** Q8 models,
-and generates configs with the correct paths. The first CUDA build can take several
-minutes; rerunning setup reuses completed compilation and downloads. No manual
-JSON editing is required.
+Setup installs Python dependencies, obtains the native runtime, downloads the default
+**Ming + Kokoro** Q8 models, and generates configs with the correct paths. Rerunning
+setup reuses verified archives and completed model downloads. No manual JSON editing
+is required.
 
 ### Optional models
 
@@ -54,6 +70,8 @@ PocketTTS cloning needs reference audio without a transcript. Its weights requir
 ./setup.sh --add pocket --plan     # Preview installation commands
 ```
 
+On Windows, use `setup.bat` for the same options and `run-local.bat` to restart.
+
 `--add` keeps your existing selection. `--models` replaces the enabled selection;
 downloaded weights remain on disk. Only enabled profiles appear in Studio.
 `setup-firered.sh` and `setup-pocket.sh` are compatibility shortcuts to this same
@@ -65,9 +83,10 @@ installer.
 one character checkpoint resident at a time. Use `--gpu-device 1` to select another
 GPU. This mode needs an enabled CPU model and an enabled character model.
 
-For synthesis on GPU throughout, launch with `./run-local.sh`. Setup configures all
-models for GPU 0 by default; `./setup.sh --device 1` selects another GPU. For a
-machine without CUDA, use `./setup.sh --cpu` and then `./run-local.sh`.
+For synthesis on GPU throughout, launch with `./run-local.sh` or `run-local.bat`.
+Setup configures all models for GPU 0 by default; use `--device 1` during setup to
+select another GPU. For a machine without CUDA, use `--cpu` during setup and launch
+without `--kokoro-cpu`.
 
 Generated configs and the saved model selection live in `.cache/install/`.
 Setup manages these files and rewrites them when selection changes. For custom
@@ -75,9 +94,9 @@ settings, copy `native.json` and `backend.json` elsewhere and select them with
 `AUDIOCPP_CONFIG` and `SPEECH_CONFIG`. Existing installations without generated
 configs still use `audiocpp-server.local.json` and `backend.json`.
 
-The installer reuses `../Ming/audio.cpp` if present; otherwise it clones into
-`.cache/audio.cpp`. `AUDIOCPP_SOURCE`, `AUDIOCPP_BUILD_DIR`, and `BUILD_JOBS` override
-source location, build location, and compilation parallelism. `AUDIOCPP_SERVER`
+For source builds, the installer reuses `../Ming/audio.cpp` if present; otherwise it
+clones into `.cache/audio.cpp`. `AUDIOCPP_SOURCE`, `AUDIOCPP_BUILD_DIR`, and `BUILD_JOBS`
+override source location, build location, and compilation parallelism. `AUDIOCPP_SERVER`
 overrides the runtime binary when launching. See [AUDIOCPP.md](AUDIOCPP.md) for
 advanced settings and [adding future models](AUDIOCPP.md#adding-a-model-to-the-shared-installer).
 

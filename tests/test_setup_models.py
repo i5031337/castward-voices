@@ -78,13 +78,74 @@ class SetupModelTests(unittest.TestCase):
             routed = setup.read_json(root / 'split/backend.json')['backend_routes']
             self.assertEqual(set(routed), {'kokoro', 'kokoro-stream', 'pocket-english'})
 
+    def test_windows_install_uses_ninja_and_executable_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            install = root / 'install'
+            environment = {'BUILD_JOBS': '2', 'AUDIOCPP_SOURCE': str(root / 'audio.cpp'),
+                           'AUDIOCPP_BUILD_DIR': str(root / 'build')}
+            with patch.object(setup, 'is_windows', return_value=True), \
+                    patch.object(setup, 'INSTALL', install), \
+                    patch.dict(os.environ, environment, clear=True), \
+                    patch('sys.argv', ['setup_models.py', '--models', 'ming,kokoro', '--cpu',
+                                       '--build-from-source']), \
+                    patch.object(setup.shutil, 'which', side_effect=lambda name: name), \
+                    patch.object(setup.subprocess, 'run') as calls, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                setup.main()
+            commands = [call.args[0] for call in calls.call_args_list]
+            configure = next(command for command in commands if command[0] == 'cmake')
+            self.assertIn('-G', configure)
+            self.assertIn('-DCMAKE_C_COMPILER=cl', configure)
+            self.assertIn('-DCMAKE_CXX_COMPILER=cl', configure)
+            pip = next(command for command in commands if command[:3] == ['uv', 'pip', 'install'])
+            interpreter = Path(pip[pip.index('--python') + 1])
+            self.assertEqual((interpreter.parent.name, interpreter.name), ('Scripts', 'python.exe'))
+            self.assertTrue((install / 'server-path').read_text().strip().endswith('audiocpp_server.exe'))
+            self.assertEqual(setup.read_json(install / 'settings.json')['platform'], 'windows')
+
+    def test_windows_install_checks_msvc_before_commands(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(setup, 'is_windows', return_value=True), \
+                    patch.object(setup, 'INSTALL', Path(directory) / 'install'), \
+                    patch('sys.argv', ['setup_models.py', '--cpu', '--build-from-source']), \
+                    patch.object(setup.shutil, 'which', return_value=None), \
+                    patch.object(setup.subprocess, 'run') as commands, \
+                    contextlib.redirect_stdout(io.StringIO()), \
+                    self.assertRaises(SystemExit):
+                setup.main()
+            commands.assert_not_called()
+
+    def test_windows_default_uses_prebuilt_without_build_tools(self):
+        with tempfile.TemporaryDirectory() as directory:
+            install = Path(directory) / 'install'
+            install.mkdir()
+            (install / 'settings.json').write_text(json.dumps({
+                'platform': 'windows', 'runtime': 'source', 'models': ['ming', 'kokoro']}))
+            binary = Path(directory) / 'audiocpp_server.exe'
+            binary.touch()
+            with patch.object(setup, 'is_windows', return_value=True), \
+                    patch.object(setup, 'INSTALL', install), \
+                    patch('sys.argv', ['setup_models.py', '--cpu']), \
+                    patch.object(setup.shutil, 'which', return_value=None), \
+                    patch.object(setup.windows_prebuilt, 'install', return_value=binary) as prebuilt, \
+                    patch.object(setup.subprocess, 'run') as calls, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                setup.main()
+            prebuilt.assert_called_once_with(True)
+            commands = [call.args[0] for call in calls.call_args_list]
+            self.assertTrue(all(command[0] not in {'git', 'cmake'} for command in commands))
+            self.assertEqual((install / 'server-path').read_text().strip(), str(binary))
+            self.assertEqual(setup.read_json(install / 'settings.json')['runtime'], 'prebuilt')
+
     def test_install_only_commits_selection_after_success(self):
         with tempfile.TemporaryDirectory() as directory:
             install = Path(directory) / 'install'
-            environment = {'BUILD_JOBS': '2', 'AUDIOCPP_SOURCE': str(setup.ROOT.parent / 'Ming/audio.cpp'),
+            environment = {'BUILD_JOBS': '2', 'AUDIOCPP_SOURCE': str(Path(directory) / 'audio.cpp'),
                            'AUDIOCPP_BUILD_DIR': str(Path(directory) / 'build')}
             def run(args, failure=None):
-                with patch.object(setup, 'INSTALL', install), patch.dict(os.environ, environment, clear=True), \
+                with patch.object(setup, 'is_windows', return_value=False), \
+                        patch.object(setup, 'INSTALL', install), patch.dict(os.environ, environment, clear=True), \
                         patch('sys.argv', ['setup_models.py', *args]), \
                         patch.object(setup.subprocess, 'run', side_effect=failure) as calls, \
                         contextlib.redirect_stdout(io.StringIO()):

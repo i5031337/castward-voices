@@ -117,6 +117,10 @@ medians, memory measurements, text-coverage checks, or voice-quality ratings.
 
 ### Windows FireRedTTS3 pilot
 
+For the standard Windows installation, use `setup.bat` and `run-local.bat` as described
+in the [README](README.md#setup). They use the pinned v0.9.4 release. The steps below
+document an earlier, separate FireRed experiment using v0.9.2.
+
 `audiocpp-server.firered.json` and `backend-firered.json` isolate FireRedTTS3 Instruct from the older machine's native model paths. `run-firered.ps1` starts the native server and Castward API together, then stops only those child processes when the launcher exits. Open <http://127.0.0.1:8001/> after starting it. The native model is lazy-loaded on the first synthesis request.
 
 The pilot uses the official [audio.cpp v0.9.2 Windows CUDA 13.3 binary](https://github.com/0xShug0/audio.cpp/releases/tag/v0.9.2) extracted into `.cache/audio.cpp-v0.9.2/runtime/`, and the [FireRedTTS3 Instruct Q8 GGUF](https://huggingface.co/audio-cpp/audio.cpp-gguf/tree/ef1ab2598f6d4d101486e4c5b9e605c687f20642/FireRedTTS3-Instruct-GGUF) under `models/audiocpp-extra/`. The supplied native config runs a locally converted **Q4_K Instruct** file on GPU 0. Both directories are ignored by Git. The conversion preserves audio.cpp's eight embedded sidecars and model spec. The original Q8 is 4.15 GB and does not fit this machine's 4 GB GPU; the converted Q4_K is 3.19 GB on disk. This lower-bit FireRed variant has not been quality-validated against Q8 beyond smoke synthesis.
