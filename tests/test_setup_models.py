@@ -26,6 +26,9 @@ class SetupModelTests(unittest.TestCase):
                 with self.subTest(selection=selection):
                     native, speech = setup.make_configs(self.catalog, selection)
                     config = ServerConfig.model_validate(speech)
+                    if 'narrator' in config.models:
+                        self.assertEqual(config.models['narrator'].display_name,
+                                         'Kokoro 82M · preset voices')
                     ids = {model['id'] for model in native['models']}
                     for profile in config.models.values():
                         for key in ('backend_model', 'clone_model', 'design_model', 'streaming_model'):

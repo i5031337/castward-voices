@@ -30,7 +30,7 @@ def server_binary(build):
 
 
 def read_json(path):
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def select_models(catalog, previous, models=None, add=None):

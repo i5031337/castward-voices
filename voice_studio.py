@@ -63,7 +63,7 @@ def register_studio(app, settings, authenticate, SpeechRequest, encode_audio):
 
     @app.get("/", include_in_schema=False)
     async def studio_page():
-        html = (assets / "index.html").read_text()
+        html = (assets / "index.html").read_text(encoding="utf-8")
         for name in ("studio.css", "studio.js"):
             version = hashlib.sha256((assets / name).read_bytes()).hexdigest()[:16]
             url = f"/studio-assets/{name}"

@@ -106,7 +106,7 @@ class ServerConfig(BaseModel):
 
 def load_config(path):
     path = Path(path).resolve()
-    settings = ServerConfig.model_validate_json(path.read_text())
+    settings = ServerConfig.model_validate_json(path.read_bytes())
     if settings.alignment_model:
         alignment = Path(settings.alignment_model)
         settings.alignment_model = str(alignment if alignment.is_absolute() else path.parent / alignment)
