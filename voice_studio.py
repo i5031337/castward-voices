@@ -23,6 +23,16 @@ MAX_REFERENCE_BYTES = 5 * 1024 * 1024
 log = logging.getLogger("speech.studio")
 
 
+class StudioStaticFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 200 and path.endswith(".js"):
+            # Windows MIME mappings may label .js as text/plain. Module scripts
+            # require a JavaScript MIME type or the browser will not run them.
+            response.headers["content-type"] = "text/javascript; charset=utf-8"
+        return response
+
+
 def decode_reference(encoded):
     try:
         raw = base64.b64decode(encoded, validate=True)
@@ -49,11 +59,11 @@ def decode_reference(encoded):
 
 def register_studio(app, settings, authenticate, SpeechRequest, encode_audio):
     assets = Path(__file__).with_name("webui")
-    app.mount("/studio-assets", StaticFiles(directory=assets), name="studio-assets")
+    app.mount("/studio-assets", StudioStaticFiles(directory=assets), name="studio-assets")
 
     @app.get("/", include_in_schema=False)
     async def studio_page():
-        html = (assets / "index.html").read_text()
+        html = (assets / "index.html").read_text(encoding="utf-8")
         for name in ("studio.css", "studio.js"):
             version = hashlib.sha256((assets / name).read_bytes()).hexdigest()[:16]
             url = f"/studio-assets/{name}"

@@ -65,7 +65,10 @@ class StudioTests(unittest.TestCase):
     def test_page_assets_auth_and_dynamic_model_metadata(self):
         self.assertEqual(self.client.get('/').status_code,200)
         self.assertIn('Castward Voice Studio',self.client.get('/').text)
-        self.assertEqual(self.client.get('/studio-assets/studio.js').status_code,200)
+        self.assertIn('Castward Voice Studio · Castward Voices',self.client.get('/').text)
+        script = self.client.get('/studio-assets/studio.js')
+        self.assertEqual(script.status_code,200)
+        self.assertTrue(script.headers['content-type'].startswith('text/javascript'))
         self.assertEqual(self.client.get('/ui/config').status_code,401)
         self.assertEqual(self.generate().status_code,200)
         self.assertEqual(self.client.post('/ui/generate',json={'mode':'speech','speech':{'model':'reader','input':'Hi'}}).status_code,401)

@@ -7,14 +7,30 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import sys
+import zipfile
+
+import windows_prebuilt
 
 
 ROOT = Path(__file__).resolve().parent
 INSTALL = ROOT / ".cache/install"
 
 
+def is_windows():
+    return sys.platform == "win32"
+
+
+def venv_python():
+    return ROOT / ".venv" / ("Scripts/python.exe" if is_windows() else "bin/python")
+
+
+def server_binary(build):
+    return build / "bin" / ("audiocpp_server.exe" if is_windows() else "audiocpp_server")
+
+
 def read_json(path):
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def select_models(catalog, previous, models=None, add=None):
@@ -68,6 +84,8 @@ def build_commands(source, build, catalog, *, cpu, jobs):
     configure = ["cmake", "-S", str(source), "-B", str(build), "-DAUDIOCPP_MODEL_SET=custom",
                  "-DAUDIOCPP_MODELS=" + ",".join(dict.fromkeys(m["family"] for m in catalog["models"].values())),
                  "-DENGINE_ENABLE_CUDA=" + ("OFF" if cpu else "ON")]
+    if is_windows() and not (build / "CMakeCache.txt").exists():
+        configure.extend(["-G", "Ninja", "-DCMAKE_C_COMPILER=cl", "-DCMAKE_CXX_COMPILER=cl"])
     if not (build / "CMakeCache.txt").exists():
         configure.append("-DCMAKE_BUILD_TYPE=Release")
         if not cpu:
@@ -88,6 +106,11 @@ def main():
     parser.add_argument("--gpu", action="store_true", help="Switch an existing CPU install to CUDA")
     parser.add_argument("--device", type=int, default=None, help="CUDA device (default: 0)")
     parser.add_argument("--plan", action="store_true", help="Show commands without installing")
+    runtime_choice = parser.add_mutually_exclusive_group()
+    runtime_choice.add_argument("--build-from-source", action="store_true",
+                                help="Compile audio.cpp instead of using the Windows release binary")
+    runtime_choice.add_argument("--prebuilt", action="store_true",
+                                help="Switch an existing Windows source build to the release binary")
     args = parser.parse_args()
     if args.list_models:
         for name, model in catalog["models"].items():
@@ -98,6 +121,9 @@ def main():
         selected = select_models(catalog, previous, args.models, args.add)
         if args.cpu and args.gpu:
             raise ValueError("Choose --cpu or --gpu")
+        if args.prebuilt and not is_windows():
+            raise ValueError("--prebuilt is available on Windows only")
+        use_prebuilt = is_windows() and not args.build_from_source
         cpu = False if args.gpu else args.cpu or previous.get("cpu", False)
         device = args.device if args.device is not None else previous.get("device", 0)
         jobs = int(os.environ.get("BUILD_JOBS", "2"))
@@ -108,19 +134,34 @@ def main():
         existing_source = ROOT.parent / "Ming/audio.cpp"
         source = Path(os.environ.get("AUDIOCPP_SOURCE", previous.get("source", str(
             existing_source if existing_source.is_dir() else ROOT / ".cache/audio.cpp")))).resolve()
-        same_backend = cpu == previous.get("cpu", False)
+        platform = "windows" if is_windows() else "linux"
+        same_backend = (cpu == previous.get("cpu", False)
+                        and platform == previous.get("platform", "linux")
+                        and previous.get("runtime", "source") == "source")
         default_build = previous.get("build") if same_backend else None
-        build = Path(os.environ.get("AUDIOCPP_BUILD_DIR", default_build or str(
-            ROOT / ".cache/audio.cpp-cpu-build" if cpu else source / "build/ming-cuda"))).resolve()
+        if is_windows():
+            suggested_build = ROOT / (".cache/audio.cpp-windows-msvc-cpu-build" if cpu else ".cache/audio.cpp-windows-msvc-cuda-build")
+        else:
+            suggested_build = ROOT / ".cache/audio.cpp-cpu-build" if cpu else source / "build/ming-cuda"
+        build = Path(os.environ.get("AUDIOCPP_BUILD_DIR", default_build or str(suggested_build))).resolve()
         commands = []
-        if not source.exists():
+        if is_windows() and not use_prebuilt and not args.plan:
+            if not shutil.which("cl"):
+                raise ValueError("MSVC cl.exe is missing. Install Visual Studio Build Tools 2022 or newer with the Desktop development with C++ workload, MSVC x64 tools, Windows SDK, and OpenMP, then run setup.bat --build-from-source from an x64 Native Tools Command Prompt. Use setup.bat --prebuilt to avoid building.")
+            if not shutil.which("ninja"):
+                raise ValueError("Ninja is missing. Install Ninja, then rerun setup.bat.")
+            if not cpu and not shutil.which("nvcc"):
+                raise ValueError("CUDA nvcc.exe is missing. Install the NVIDIA CUDA Toolkit, then rerun setup.bat or use setup.bat --cpu.")
+        if not use_prebuilt and not source.exists():
             commands += [["git", "clone", catalog["source"]["url"], str(source)],
                          ["git", "-C", str(source), "checkout", catalog["source"]["revision"]],
                          ["git", "-C", str(source), "submodule", "update", "--init", "--recursive"]]
         commands += [["uv", "venv", "--python", "3.11", str(ROOT / ".venv")]] if not (ROOT / ".venv").is_dir() else []
-        commands += [["uv", "pip", "install", "--python", str(ROOT / ".venv/bin/python"), "-r", str(ROOT / "requirements.lock.txt")]]
-        commands += build_commands(source, build, catalog, cpu=cpu, jobs=jobs)
+        commands += [["uv", "pip", "install", "--python", str(venv_python()), "-r", str(ROOT / "requirements.lock.txt")]]
+        if not use_prebuilt:
+            commands += build_commands(source, build, catalog, cpu=cpu, jobs=jobs)
         hf = ["hf"] if shutil.which("hf") else ["uv", "tool", "run", "--from", "huggingface_hub", "hf"]
+        model_commands = []
         for name in selected:
             model = catalog["models"][name]
             patterns = model["include"]
@@ -132,27 +173,43 @@ def main():
                     command += ["--include", pattern]
             if model.get("exclude"):
                 command += ["--exclude", *model["exclude"]]
-            commands.append(command)
+            model_commands.append(command)
         print("Models: " + ", ".join(selected), flush=True)
-        if not args.plan:
+        if not args.plan and not use_prebuilt:
             source.parent.mkdir(parents=True, exist_ok=True)
         for command in commands:
-            print("+ " + shlex.join(command), flush=True)
+            print("+ " + (subprocess.list2cmdline(command) if is_windows() else shlex.join(command)), flush=True)
+            if not args.plan:
+                subprocess.run(command, cwd=ROOT, check=True)
+        if use_prebuilt:
+            pin, kind, archives = windows_prebuilt.release_spec(cpu)
+            for item in archives:
+                print(f"+ download {pin['release_url']}{item['file']} (SHA-256 {item['sha256']})", flush=True)
+            native_binary = windows_prebuilt.binary_path(pin, kind)
+            if not args.plan:
+                native_binary = windows_prebuilt.install(cpu)
+        else:
+            native_binary = server_binary(build)
+        for command in model_commands:
+            print("+ " + (subprocess.list2cmdline(command) if is_windows() else shlex.join(command)), flush=True)
             if not args.plan:
                 subprocess.run(command, cwd=ROOT, check=True)
         if args.plan:
             return
         INSTALL.mkdir(parents=True, exist_ok=True)
         for name, data in (("native.json", native), ("backend.json", speech), ("settings.json", {
-                "models": selected, "cpu": cpu, "device": device, "source": str(source), "build": str(build)})):
+                "models": selected, "cpu": cpu, "device": device, "source": str(source),
+                "build": str(build), "platform": platform,
+                "runtime": "prebuilt" if use_prebuilt else "source"})):
             temporary = INSTALL / (name + ".tmp")
             temporary.write_text(json.dumps(data, indent=2) + "\n")
             temporary.replace(INSTALL / name)
-        (INSTALL / "server-path").write_text(str(build / "bin/audiocpp_server") + "\n")
-        print("Setup complete. Stop the running server, then launch: ./run-local.sh")
+        (INSTALL / "server-path").write_text(str(native_binary) + "\n")
+        launcher = "run-local.bat" if is_windows() else "./run-local.sh"
+        print(f"Setup complete. Stop the running server, then launch: {launcher}")
         if "pocket" in selected:
             print("PocketTTS attribution: THIRD_PARTY_NOTICES.md")
-    except (ValueError, OSError, subprocess.CalledProcessError) as exc:
+    except (ValueError, OSError, zipfile.BadZipFile, subprocess.CalledProcessError) as exc:
         parser.exit(1, f"Setup failed: {exc}\nRerun the same command to resume completed downloads/build work.\n")
 
 

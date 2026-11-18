@@ -19,6 +19,7 @@ from test_server import FakeBackend, CONFIG
 class ModelProfileTests(unittest.TestCase):
     def test_configured_qwen_routes_and_compatibility_aliases(self):
         config=load_config(Path(__file__).resolve().parents[1]/'backend.json')
+        self.assertEqual(config.models['narrator'].display_name,'Kokoro 82M · preset voices')
         self.assertEqual(config.resolve('qwen3-tts')[1].clone_model,'qwen-base-0.6b')
         self.assertEqual(config.resolve('qwen3-tts-0.6b')[0],'qwen3-tts')
         self.assertEqual(config.resolve('qwen3-tts-1.7b')[1].clone_model,'qwen-base-1.7b')

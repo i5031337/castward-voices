@@ -1,0 +1,22 @@
+{
+  "version": "v0.9.4",
+  "release_url": "https://github.com/0xShug0/audio.cpp/releases/download/v0.9.4/",
+  "packages": {
+    "cpu": [
+      {
+        "file": "audio-v0.9.4-bin-windows-x64-cpu.zip",
+        "sha256": "596ef1d6ed5113f3a4f5194c8c00e02be5748d7dfb09e7f270168e6ec5c8e0cf"
+      }
+    ],
+    "cuda13.3": [
+      {
+        "file": "audio-v0.9.4-bin-windows-x64-cuda13.3.zip",
+        "sha256": "b05eceb8aa0a29e618b3af87e0c2fd0fb665034d181096eb868ed856bf656b8b"
+      },
+      {
+        "file": "audio-v0.9.4-cudart-windows-x64-cuda13.3.zip",
+        "sha256": "b93fa9b9cb875ccea1aa81cb09fd6b02c9afda133de73bd119a73ff5d8db6d96"
+      }
+    ]
+  }
+}
