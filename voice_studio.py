@@ -75,14 +75,14 @@ def register_studio(app, settings, authenticate, SpeechRequest, encode_audio):
         def discover():
             native = app.state.backend.discover()
             profiles = []
-            for name, profile in settings.models.items():
+            for name, profile in settings.public_models().items():
                 data = profile.model_dump()
                 data["seed_max"] = str(profile.seed_max)
                 data["id"] = name
-                data["voices"] = app.state.backend.voices(profile)
+                data["voices"] = app.state.backend.voices(profile) if profile.preset_enabled else []
                 profiles.append(data)
             return {"profiles": profiles, "native_models": native,
-                    "default_model": settings.default_model,
+                    "default_model": settings.public_default_model(),
                     "output_sample_rate": settings.output_sample_rate,
                     "max_reference_bytes": MAX_REFERENCE_BYTES}
         try:
@@ -103,30 +103,34 @@ def register_studio(app, settings, authenticate, SpeechRequest, encode_audio):
         request = body.speech
         try:
             model_id, profile = settings.resolve(request.model)
-            if ("voice_id" in request.options or any(key in request.options for key in profile.instruction_conditions)) and not request.voice:
+            if body.mode == "speech" and not profile.preset_enabled:
+                raise ValueError("This profile does not provide preset voices")
+            mode_profile = profile.for_mode(body.mode)
+            if ("voice_id" in request.options or any(key in request.options for key in mode_profile.instruction_conditions)) and not request.voice:
                 profile = profile.model_copy(update={"default_voice": None})
-            effective = profile.options_for(body.mode, request.options)
-            if request.instructions and profile.instruction_option:
-                effective[profile.instruction_option] = request.instructions
-            profile.validate_options(effective, body.mode)
+                mode_profile = mode_profile.model_copy(update={"default_voice": None})
+            effective = mode_profile.options_for(body.mode, request.options)
+            if request.instructions and mode_profile.instruction_option:
+                effective[mode_profile.instruction_option] = request.instructions
+            mode_profile.validate_options(effective, body.mode)
             if request.npc_id or request.stream:
                 raise ValueError("The studio uses standalone clips; NPC persistence and streaming use /v1/audio/speech")
             if len(request.input) > profile.max_input_chars:
                 raise ValueError(f"Input exceeds the profile's {profile.max_input_chars}-character limit")
             if body.mode == "design" and not profile.design_model:
                 raise ValueError("This profile does not support voice design")
-            if body.mode == "design" and profile.accepts_instruction(effective) and (not request.instructions or not request.instructions.strip()):
+            if body.mode == "design" and mode_profile.accepts_instruction(effective) and (not request.instructions or not request.instructions.strip()):
                 raise ValueError("Voice design needs a description for this template")
             if body.mode == "clone" and (not profile.clone_model or not body.reference_audio):
                 raise ValueError("Voice cloning needs a clone-capable model and reference audio")
             if body.mode != "clone" and body.reference_audio:
                 raise ValueError("Reference audio is only used in clone mode")
             contextual = bool(request.context_before or request.context_after)
-            if contextual and (body.mode != "speech" or not profile.context):
+            if contextual and (body.mode != "speech" or not mode_profile.context):
                 raise ValueError("Context is only available for a context-enabled speech profile")
-            if contextual and len(request.context_before + request.input + request.context_after) > profile.context_max_chars:
+            if contextual and len(request.context_before + request.input + request.context_after) > mode_profile.context_max_chars:
                 raise ValueError("Context plus input exceeds the profile's configured context limit")
-            if ((request.speed != 1 and not profile.native_speed) or request.response_format in {"opus", "aac"}) and not shutil.which("ffmpeg"):
+            if ((request.speed != 1 and not mode_profile.native_speed) or request.response_format in {"opus", "aac"}) and not shutil.which("ffmpeg"):
                 raise ValueError("This format or speed requires ffmpeg on PATH")
 
             def generate():
@@ -157,7 +161,7 @@ def register_studio(app, settings, authenticate, SpeechRequest, encode_audio):
                 converted = resample(audio, rate, settings.output_sample_rate)
                 if settings.output_level_dbfs is not None:
                     converted = OutputNormalizer(settings.output_sample_rate, settings.output_level_dbfs).apply(converted)
-                tempo = 1 if profile.native_speed else request.speed
+                tempo = 1 if mode_profile.native_speed else request.speed
                 preview = encode_audio(converted, settings.output_sample_rate, "wav", tempo)
                 download = preview if request.response_format == "wav" else encode_audio(converted, settings.output_sample_rate, request.response_format, tempo)
                 elapsed = time.perf_counter() - started

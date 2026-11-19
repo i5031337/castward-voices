@@ -168,8 +168,11 @@ def create_app(*, config=None, config_path=None, backend=None, voices_dir="voice
 
     @app.get("/v1/models", dependencies=[Depends(authenticate)])
     async def models():
-        return {"object": "list", "data": [{"id": name, "object": "model", "created": 0, "owned_by": "local"}
-                for name in (*settings.models, *settings.aliases)]}
+        return {"object": "list", "data": [{"id": name, "object": "model", "created": 0, "owned_by": "local",
+                "display_name": profile.display_name or name, "description": profile.description,
+                "capabilities": [mode for mode, enabled in (("presets", profile.preset_enabled), ("design", bool(profile.design_model)),
+                                ("clone", bool(profile.clone_model))) if enabled]}
+                for name, profile in settings.public_models().items()]}
 
     @app.get("/v1/backend/models", dependencies=[Depends(authenticate)])
     async def backend_models():
@@ -180,7 +183,9 @@ def create_app(*, config=None, config_path=None, backend=None, voices_dir="voice
     async def voices():
         def discover():
             data = []
-            for name, profile in settings.models.items():
+            for name, profile in settings.public_models().items():
+                if not profile.preset_enabled:
+                    continue
                 available = set(profile.voice_aliases.values()) | set(profile.voice_descriptions)
                 available.update(app.state.backend.voices(profile))
                 data.extend({"id": voice, "model": name} for voice in sorted(available))

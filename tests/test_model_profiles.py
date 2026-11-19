@@ -9,6 +9,7 @@ import unittest
 
 import numpy as np
 import soundfile as sf
+import httpx
 from fastapi.testclient import TestClient
 from audiocpp_backend import AudioCppBackend
 from backend_config import load_config, ServerConfig
@@ -17,6 +18,110 @@ from test_server import FakeBackend, CONFIG
 
 
 class ModelProfileTests(unittest.TestCase):
+    def test_public_models_show_presets_and_every_designer_cloner_pair(self):
+        config = load_config(Path(__file__).resolve().parents[1] / 'backend.json')
+        public = config.public_models()
+        designers = {'ming', 'qwen-design-1.7b', 'firered-instruct'}
+        cloners = {'ming', 'qwen-base-0.6b', 'qwen-base-1.7b', 'firered-instruct', 'pocket-english'}
+        pairs = {f'design-{designer}--clone-{cloner}' for designer in designers for cloner in cloners}
+        self.assertEqual(set(public), pairs | {'ming-presets', 'narrator', 'qwen3-customvoice', 'pocket-tts', 'fireredtts3-presets'})
+        self.assertEqual(config.public_default_model(), 'design-ming--clone-ming')
+        self.assertTrue(all(not public[name].preset_enabled for name in pairs))
+        self.assertTrue(all(public[name].preset_enabled for name in set(public) - pairs))
+
+        class DiscoveryBackend:
+            def discover(self):
+                native_ids = {value for profile in config.models.values() for value in
+                              (profile.backend_model, profile.design_model, profile.clone_model,
+                               profile.streaming_model) if value}
+                return [{'id': model} for model in native_ids]
+            def voices(self, profile):
+                return []
+
+        with tempfile.TemporaryDirectory() as directory, TestClient(create_app(
+                config=config, backend=DiscoveryBackend(), voices_dir=directory)) as client:
+            models = client.get('/v1/models').json()['data']
+            self.assertEqual({entry['id'] for entry in models}, set(public))
+            self.assertFalse({*config.aliases, 'npc', 'qwen3-tts'} & {entry['id'] for entry in models})
+            studio = client.get('/ui/config').json()
+            self.assertEqual({entry['id'] for entry in studio['profiles']}, set(public))
+            self.assertEqual(studio['default_model'], config.public_default_model())
+
+    def test_cross_family_pairs_keep_each_models_native_options(self):
+        config = load_config(Path(__file__).resolve().parents[1] / 'backend.json')
+        backend = AudioCppBackend(config)
+        try:
+            reference = (np.ones(2400) * 0.1, 24000)
+            body = SpeechRequest(model='design-firered-instruct--clone-pocket-english',
+                                 input='The gate is open.', language='English', seed=42)
+            profile = config.resolve(body.model)[1]
+            design = backend.payload(profile, body, mode='design', instruction='An older guard')
+            clone = backend.payload(profile, body, mode='clone', reference=reference,
+                                    reference_text='The gate is open.')
+            self.assertEqual(design['model'], 'firered-instruct')
+            self.assertEqual(design['options']['template_name'], 'voice_design')
+            self.assertEqual(design['options']['language'], 'English')
+            self.assertNotIn('max_tokens', design['options'])
+            self.assertEqual(clone['model'], 'pocket-english')
+            self.assertEqual(clone['options'], {})
+            self.assertNotIn('voice', clone)
+            body = body.model_copy(update={'model': 'design-ming--clone-qwen-base-0.6b'})
+            profile = config.resolve(body.model)[1]
+            design = backend.payload(profile, body, mode='design', instruction='An older guard')
+            clone = backend.payload(profile, body, mode='clone', reference=reference,
+                                    reference_text='The gate is open.')
+            self.assertEqual((design['model'], design['options']['template_name']), ('ming', 'voice_design'))
+            self.assertEqual(clone['model'], 'qwen-base-0.6b')
+            self.assertNotIn('template_name', clone['options'])
+        finally:
+            backend.close()
+
+    def test_studio_generates_with_cross_family_pair(self):
+        config = load_config(Path(__file__).resolve().parents[1] / 'backend.json')
+        calls = []
+        output = io.BytesIO()
+        sf.write(output, np.ones(24000) * 0.1, 24000, format='WAV')
+        native_ids = {value for profile in config.models.values() for value in
+                      (profile.backend_model, profile.design_model, profile.clone_model,
+                       profile.streaming_model) if value}
+
+        def handle(request):
+            if request.url.path == '/v1/models':
+                return httpx.Response(200, json={'data': [{'id': name} for name in native_ids]})
+            if request.url.path == '/v1/audio/voices':
+                return httpx.Response(200, json={'voices': []})
+            calls.append(json.loads(request.content))
+            return httpx.Response(200, content=output.getvalue())
+
+        backend = AudioCppBackend(config, transport=httpx.MockTransport(handle))
+        try:
+            with tempfile.TemporaryDirectory() as directory, TestClient(create_app(
+                    config=config, backend=backend, voices_dir=directory)) as client:
+                model = 'design-firered-instruct--clone-pocket-english'
+                design = client.post('/ui/generate', json={'mode': 'design', 'speech': {
+                    'model': model, 'input': 'Hello there.', 'instructions': 'A clear, calm voice',
+                    'response_format': 'wav'}})
+                self.assertEqual(design.status_code, 200, design.text)
+                self.assertEqual(calls[-1]['model'], 'firered-instruct')
+                self.assertEqual(calls[-1]['options']['template_name'], 'voice_design')
+                clone = client.post('/ui/generate', json={'mode': 'clone',
+                    'reference_audio': design.json()['reference_audio'],
+                    'reference_text': 'Hello there.', 'speech': {
+                        'model': model, 'input': 'Welcome back.', 'response_format': 'wav'}})
+                self.assertEqual(clone.status_code, 200, clone.text)
+                self.assertEqual(calls[-1]['model'], 'pocket-english')
+                self.assertEqual(calls[-1]['options'], {})
+                self.assertIn('voice_ref', calls[-1])
+                preset = client.post('/v1/audio/speech', json={
+                    'model': 'ming-presets', 'input': 'Welcome back.', 'response_format': 'wav'})
+                self.assertEqual(preset.status_code, 200, preset.text)
+                self.assertEqual(calls[-1]['model'], 'ming')
+                self.assertEqual(calls[-1]['options']['template_name'], 'ip')
+                self.assertEqual(calls[-1]['options']['voice_id'], 'US_Emma')
+                self.assertNotIn('instruct', calls[-1]['options'])
+        finally:
+            backend.close()
+
     def test_configured_qwen_routes_and_compatibility_aliases(self):
         config=load_config(Path(__file__).resolve().parents[1]/'backend.json')
         self.assertEqual(config.models['narrator'].display_name,'Kokoro 82M · preset voices')

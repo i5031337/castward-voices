@@ -74,6 +74,8 @@ class AudioCppBackend:
 
     def payload(self, profile, body, *, instruction=None, reference=None, reference_text=None,
                 mode="speech", text=None, seed=None, options=None):
+        pair_limit = profile.seed_max
+        profile = profile.for_mode(mode)
         model = {"design": profile.design_model, "clone": profile.clone_model,
                  "stream": profile.streaming_model}.get(mode, profile.backend_model)
         if not model:
@@ -103,8 +105,8 @@ class AudioCppBackend:
             request["speed"] = body.speed
         chosen_seed = body.seed if seed is None else seed
         if chosen_seed is not None:
-            if not 0 <= chosen_seed <= profile.seed_max:
-                raise ValueError(f"Seed must be between 0 and {profile.seed_max} for this profile")
+            if not 0 <= chosen_seed <= pair_limit:
+                raise ValueError(f"Seed must be between 0 and {pair_limit} for this profile")
             # Native JSON numbers use doubles; preserve all supported uint64 bits.
             request["seed"] = str(chosen_seed)
         voice = body.voice or (profile.default_voice if mode in {"speech", "stream"} else None)

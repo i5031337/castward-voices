@@ -87,14 +87,21 @@ window.addEventListener('resize', hideTooltip);
 
 function notice(message = '') { $('notice').textContent = message; $('notice').hidden = !message; }
 function profile() { return state.config?.profiles.find((p) => p.id === $('model').value); }
+function modeProfile(p = profile(), mode = state.mode) {
+  if (!p) return null;
+  return { ...p, ...(p.mode_profiles?.[mode] || {}), id: p.id, display_name: p.display_name,
+    description: p.description, design_model: p.design_model, clone_model: p.clone_model,
+    preset_enabled: p.preset_enabled, seed_max: p.seed_max, max_input_chars: p.max_input_chars };
+}
 function nativeModel(p = profile(), mode = state.mode) {
+  p = modeProfile(p, mode);
   const id = ({ design: p?.design_model, clone: p?.clone_model, speech: p?.backend_model })[mode];
   return state.config?.native_models.find((m) => m.id === id);
 }
 function create(tag, className, text) { const el = document.createElement(tag); if (className) el.className = className; if (text !== undefined) el.textContent = text; return el; }
 function humanize(value) { return value.replaceAll('_', ' ').replace(/^\w/, (c) => c.toUpperCase()); }
 function modelName(p) { return p.display_name || humanize(p.id); }
-function modeDefaults(p = profile()) {
+function modeDefaults(p = modeProfile()) {
   return { ...p.options, ...({ speech: p.preset_options, design: p.design_options, clone: p.clone_options, stream: p.streaming_options }[state.mode] || {}) };
 }
 function matches(options, conditions = {}) { return Object.entries(conditions).every(([key, values]) => values.includes(options[key])); }
@@ -113,7 +120,7 @@ function effectiveFormOptions() {
   return options;
 }
 function updateOptionAvailability() {
-  const p = profile(); if (!p) return;
+  const p = modeProfile(); if (!p) return;
   const options = effectiveFormOptions();
   for (const row of $('dynamic-options').children) {
     const conditions = row.dataset.name === p.instruction_option ? p.instruction_conditions : p.option_dependencies?.[row.dataset.name];
@@ -152,7 +159,7 @@ function rememberDraft() {
   state.drafts.set(draftKey, { options: [...$('dynamic-options').children].map((row) => ({ name: row.dataset.name, checked: row.querySelector('[data-override]').checked, value: row.querySelector('[data-value]').value })), extra: $('extra-options').value });
 }
 function renderOptions() {
-  const p = profile();
+  const p = modeProfile();
   const params = nativeModel()?.params || [];
   const dedicated = new Set(['seed', p.language_option]);
   if (state.mode === 'design' || state.mode === 'clone') dedicated.add(p.instruction_option);
@@ -203,26 +210,29 @@ function renderOptions() {
 function selectMode(mode) {
   const p = profile(); if (!p) return;
   rememberDraft();
-  if (mode === 'design' && !p.design_model) mode = 'speech';
+  if (mode === 'design' && !p.design_model) mode = p.preset_enabled ? 'speech' : 'clone';
   if (mode === 'clone' && !p.clone_model) mode = p.design_model ? 'design' : 'speech';
+  if (mode === 'speech' && !p.preset_enabled) mode = p.design_model ? 'design' : 'clone';
   state.mode = mode;
+  const active = modeProfile(p, mode);
   for (const button of document.querySelectorAll('[data-mode]')) {
-    const disabled = (button.dataset.mode === 'design' && !p.design_model) || (button.dataset.mode === 'clone' && !p.clone_model);
+    const disabled = (button.dataset.mode === 'design' && !p.design_model) ||
+      (button.dataset.mode === 'clone' && !p.clone_model) || (button.dataset.mode === 'speech' && !p.preset_enabled);
     button.disabled = disabled;
     button.title = disabled ? `This profile does not support ${button.dataset.mode}.` : '';
     button.setAttribute('aria-selected', String(button.dataset.mode === mode));
     button.tabIndex = button.dataset.mode === mode ? 0 : -1;
   }
   $('design-section').hidden = mode !== 'design';
-  $('clone-direction-field').hidden = !p.instruction_option;
-  $('reference-transcript-field').hidden = !p.reference_text_option;
-  $('language-field').hidden = !p.language_option;
+  $('clone-direction-field').hidden = !active.instruction_option;
+  $('reference-transcript-field').hidden = !active.reference_text_option;
+  $('language-field').hidden = !active.language_option;
   $('description-label').textContent = mode === 'clone' ? 'Additional voice direction · optional' : 'Voice direction';
   $('instructions').required = mode === 'design';
   $('direction-chips').hidden = mode !== 'design';
   $('reference-section').hidden = mode !== 'clone';
   $('voice-field').hidden = mode !== 'speech';
-  $('context-section').hidden = mode !== 'speech' || !p.context;
+  $('context-section').hidden = mode !== 'speech' || !active.context;
   $('mode-help').textContent = modes[mode];
   $('native-label').textContent = nativeModel()?.id || 'NATIVE MODEL';
   $('model-info').textContent = p.description || [p.design_model ? 'Voice design' : null, p.clone_model ? 'Voice cloning' : null, 'Preset synthesis'].filter(Boolean).join(' · ');
@@ -230,6 +240,7 @@ function selectMode(mode) {
   $('text').maxLength = p.max_input_chars;
   $('seed').title = `An integer from 0 to ${p.seed_max || '18446744073709551615'}`;
   $('seed').placeholder = 'Native default';
+  $('language-list').replaceChildren(...[...new Set(['Auto', 'English', ...Object.keys(active.language_map), ...Object.values(active.language_map).filter(Boolean)])].map((lang) => { const option = document.createElement('option'); option.value = lang; return option; }));
   renderOptions(); updateCount(); updatePreview();
 }
 function selectModel() {
@@ -242,7 +253,6 @@ function selectModel() {
   defaultOption.value = '';
   $('voice').replaceChildren(defaultOption, ...[...voiceIDs].filter(Boolean).sort().map((voice) => { const option = create('option', '', voice); option.value = voice; return option; }));
   $('voice').value = '';
-  $('language-list').replaceChildren(...[...new Set(['Auto', 'English', ...Object.keys(p.language_map), ...Object.values(p.language_map).filter(Boolean)])].map((lang) => { const option = document.createElement('option'); option.value = lang; return option; }));
   selectMode(state.mode);
 }
 
@@ -265,13 +275,14 @@ function readOptions() {
   if (!extra || Array.isArray(extra) || typeof extra !== 'object') throw new Error('Additional options must be a JSON object.');
   const combined = { ...options, ...extra };
   const effective = { ...modeDefaults(), ...combined };
-  for (const [name, conditions] of Object.entries(profile().option_dependencies || {})) {
+  for (const [name, conditions] of Object.entries(modeProfile().option_dependencies || {})) {
     if (name in combined && !matches(effective, conditions)) throw new Error(`${humanize(name)} requires ${Object.entries(conditions).map(([key, values]) => `${humanize(key)}: ${values.join(' or ')}`).join('; ')}. Change the template or remove this override.`);
   }
   return combined;
 }
 function buildRequest(preview = false) {
   const p = profile(); if (!p) throw new Error('Choose an available model.');
+  const active = modeProfile(p);
   const speech = { model: p.id, input: $('text').value, response_format: $('format').value, language: $('language').value || 'Auto', speed: Number($('speed').value), options: readOptions() };
   if ($('seed').value.trim()) {
     const seed = $('seed').value.trim();
@@ -279,7 +290,7 @@ function buildRequest(preview = false) {
     if (!/^\d+$/.test(seed) || BigInt(seed) > maximum) throw new Error(`Seed must be an integer from 0 to ${maximum} for this model.`);
     speech.seed = seed; // Preserve all 64 bits through JSON and Python validation.
   }
-  const acceptsInstruction = matches({ ...modeDefaults(), ...speech.options }, p.instruction_conditions);
+  const acceptsInstruction = matches({ ...modeDefaults(), ...speech.options }, active.instruction_conditions);
   if (state.mode === 'design' && acceptsInstruction) speech.instructions = $('instructions').value;
   if (state.mode === 'clone' && acceptsInstruction && $('clone-direction')?.value) speech.instructions = $('clone-direction').value;
   if (state.mode === 'speech' && $('voice').value) speech.voice = $('voice').value;

@@ -116,7 +116,7 @@ class SpeechEngine:
     def generate(self, body, model_id, profile):
         if not body.npc_id:
             voice = body.voice or profile.default_voice
-            instruction = body.instructions or profile.voice_descriptions.get(voice)
+            instruction = body.instructions or (profile.voice_descriptions.get(voice) if profile.design_model else None)
             mode = "design" if instruction and profile.design_model else "speech"
             return self.backend.generate(profile, body, mode=mode, instruction=instruction)
         if not profile.clone_model:

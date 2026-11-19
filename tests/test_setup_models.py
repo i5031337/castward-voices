@@ -29,6 +29,13 @@ class SetupModelTests(unittest.TestCase):
                     if 'narrator' in config.models:
                         self.assertEqual(config.models['narrator'].display_name,
                                          'Kokoro 82M · preset voices')
+                    self.assertIn(config.public_default_model(), config.public_models())
+                    source_profiles = speech['models'].values()
+                    designers = {p['design_model'] for p in source_profiles if p.get('design_model')}
+                    cloners = {p['clone_model'] for p in source_profiles if p.get('clone_model')}
+                    advertised_pairs = {name for name, p in config.public_models().items() if p.generated and p.clone_model}
+                    self.assertEqual(advertised_pairs, {
+                        f'design-{designer}--clone-{cloner}' for designer in designers for cloner in cloners})
                     ids = {model['id'] for model in native['models']}
                     for profile in config.models.values():
                         for key in ('backend_model', 'clone_model', 'design_model', 'streaming_model'):

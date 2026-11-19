@@ -9,6 +9,14 @@ class ModelProfile(BaseModel):
     backend_model: str
     display_name: str | None = None
     description: str | None = None
+    design_name: str | None = None
+    clone_name: str | None = None
+    listed: bool = True
+    preset_enabled: bool = True
+    preset_source: bool = False
+    preset_default_voice: str | None = None
+    mode_profiles: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    generated: bool = False
     design_model: str | None = None
     clone_model: str | None = None
     streaming_model: str | None = None
@@ -49,6 +57,10 @@ class ModelProfile(BaseModel):
                     "clone": self.clone_options, "stream": self.streaming_options}.get(mode, {})
         return {**self.options, **defaults, **(overrides or {})}
 
+    def for_mode(self, mode):
+        source = self.mode_profiles.get(mode)
+        return ModelProfile.model_validate(source) if source else self
+
     @staticmethod
     def conditions_match(options, conditions):
         return all(options.get(key) in allowed for key, allowed in conditions.items())
@@ -79,6 +91,7 @@ class ServerConfig(BaseModel):
     output_level_dbfs: float | None = Field(default=-20.0, ge=-35, le=-10)
     default_model: str
     aliases: dict[str, str] = Field(default_factory=dict)
+    auto_pairs: bool = False
     models: dict[str, ModelProfile]
     reference_min_seconds: float = Field(default=3, gt=0)
     reference_max_seconds: float = Field(default=10, gt=0)
@@ -97,7 +110,67 @@ class ServerConfig(BaseModel):
             raise ValueError("Aliases must not shadow profile IDs")
         if self.reference_min_seconds > self.reference_max_seconds:
             raise ValueError("Invalid reference duration range")
+        if self.auto_pairs:
+            self.build_pair_profiles()
         return self
+
+    def build_pair_profiles(self):
+        sources = [profile for profile in self.models.values() if not profile.generated]
+        designers, cloners = {}, {}
+        for profile in sources:
+            if profile.design_model:
+                designers.setdefault(profile.design_model, profile)
+            if profile.clone_model:
+                cloners.setdefault(profile.clone_model, profile)
+        for profile in sources:
+            if profile.design_model and not profile.preset_enabled:
+                profile.listed = False
+            if profile.preset_source:
+                name = f"{profile.backend_model}-presets"
+                if name not in self.models:
+                    preset = profile.model_copy(deep=True)
+                    preset.design_model = None
+                    preset.clone_model = None
+                    preset.preset_enabled = True
+                    preset.preset_source = False
+                    preset.default_voice = profile.preset_default_voice
+                    preset.voice_descriptions = {}
+                    preset.listed = True
+                    preset.generated = True
+                    preset.display_name = f"{profile.design_name or profile.backend_model} · preset voices"
+                    preset.description = f"Preset synthesis with {profile.design_name or profile.backend_model}."
+                    self.models[name] = preset
+        for design_id, designer in designers.items():
+            for clone_id, cloner in cloners.items():
+                name = f"design-{design_id}--clone-{clone_id}"
+                if name in self.models:
+                    continue
+                pair = designer.model_copy(deep=True)
+                pair.design_model, pair.clone_model = design_id, clone_id
+                design_name = designer.design_name or design_id
+                clone_name = cloner.clone_name or clone_id
+                pair.display_name = f"Design: {design_name} · Clone: {clone_name}"
+                pair.description = f"Design with {design_name}; clone the resulting voice with {clone_name}."
+                pair.preset_enabled = False
+                pair.listed = True
+                pair.generated = True
+                pair.mode_profiles = {
+                    "design": designer.model_dump(exclude={"mode_profiles"}),
+                    "clone": cloner.model_dump(exclude={"mode_profiles"}),
+                }
+                pair.seed_max = min(designer.seed_max, cloner.seed_max)
+                pair.max_input_chars = min(designer.max_input_chars, cloner.max_input_chars)
+                self.models[name] = pair
+
+    def public_models(self):
+        return {name: profile for name, profile in self.models.items() if profile.listed}
+
+    def public_default_model(self):
+        if self.models[self.default_model].listed:
+            return self.default_model
+        source = self.models[self.default_model]
+        pair = f"design-{source.design_model}--clone-{source.clone_model}"
+        return pair if pair in self.models else next(iter(self.public_models()))
 
     def resolve(self, name):
         key = self.aliases.get(name, name)

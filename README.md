@@ -127,12 +127,10 @@ Choose a model, then a supported mode:
 
 | Model profile | Use |
 |---|---|
-| Ming (`npc`) | Voice design, cloning, and built-in speakers |
-| Qwen (`qwen3-tts`) | 1.7B voice design and 0.6B cloning |
-| Qwen (`qwen3-tts-1.7b`) | 1.7B voice design and 1.7B cloning |
+| Ming (`ming-presets`) | Built-in speakers |
+| Design/clone pairs (`design-<designer>--clone-<cloner>`) | Every installed designer × cloner combination, including Ming, Qwen, FireRed, and PocketTTS |
 | Qwen CustomVoice (`qwen3-customvoice`) | Nine preset speakers |
-| FireRed (`fireredtts3`) | Instruct voice design and reference cloning; compatibility presets design fresh voices |
-| Kokoro (`narrator`, alias `kokoro`) | Preset narration and PCM streaming |
+| Kokoro (`narrator`) | Preset narration and PCM streaming |
 | PocketTTS (`pocket-tts`) | English preset voices and reference cloning |
 
 The Studio provides playback, waveforms, downloads, and model-specific generation controls. Takes stay in browser memory: **download anything you want to keep before refreshing**. Studio takes do not create saved NPC voices. See the [Studio guide](AUDIOCPP.md#castward-voice-studio-web-ui) for reference limits and advanced controls.
@@ -193,7 +191,7 @@ Saved character voices live in `voices/`; back up this directory to keep them.
 | Endpoint | Purpose |
 |---|---|
 | `POST /v1/audio/speech` | Generate speech |
-| `GET /v1/models` | List configured model profiles |
+| `GET /v1/models` | List advertised preset models and design/clone pairs |
 | `GET /v1/voices` | Discover available voices |
 | `GET /v1/voices/{npc_id}` | Check a saved character's preparation status |
 | `GET /health` | Check server health |

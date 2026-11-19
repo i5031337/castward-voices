@@ -62,11 +62,12 @@ class FireRedTests(unittest.TestCase):
             'model': 'fireredtts3', 'input': 'Welcome to the gate.', 'response_format': 'wav', **overrides})
 
     def test_standard_discovery_presets_and_language_mapping(self):
-        self.assertIn('fireredtts3', [entry['id'] for entry in self.client.get('/v1/models').json()['data']])
+        self.assertIn('design-firered-instruct--clone-firered-instruct',
+                      [entry['id'] for entry in self.client.get('/v1/models').json()['data']])
         voices = self.client.get('/v1/voices').json()['data']
-        self.assertIn({'model': 'fireredtts3', 'id': 'echo'}, voices)
+        self.assertNotIn({'model': 'fireredtts3', 'id': 'echo'}, voices)
         config = self.client.get('/ui/config').json()
-        profile = next(p for p in config['profiles'] if p['id'] == 'fireredtts3')
+        profile = next(p for p in config['profiles'] if p['id'] == 'design-firered-instruct--clone-firered-instruct')
         self.assertEqual(profile['seed_max'], '4294967295')
         self.assertIsNone(profile['streaming_model'])
         self.assertEqual(profile['language_map']['Turkish'], 'Turkish')
