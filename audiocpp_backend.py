@@ -2,13 +2,18 @@
 import base64
 import io
 import json
+import logging
 import os
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 import numpy as np
 import soundfile as sf
 from audio_utils import mono_audio, resample
+
+log = logging.getLogger("speech.backend")
 
 
 class AudioCppBackend:
@@ -29,8 +34,16 @@ class AudioCppBackend:
                                                  headers=headers, transport=transport)
         self._locks = {}
         self._locks_guard = threading.Lock()
+        self._resident = {}
+        self._resident_guard = threading.Lock()
+        self._residency_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="residency")
+        self._refreshing = set()
+        self._closing = False
 
     def close(self):
+        with self._resident_guard:
+            self._closing = True
+        self._residency_executor.shutdown(wait=True)
         for client in self._clients.values():
             client.close()
 
@@ -61,11 +74,48 @@ class AudioCppBackend:
         for url, client in self._clients.items():
             response = client.get("/v1/models", params={"include_params": "true"})
             self._check(response)
-            for entry in response.json().get("data", []):
+            native_entries = response.json().get("data", [])
+            self._observe_residency(url, native_entries)
+            for entry in native_entries:
                 target = self.config.backend_routes.get(entry["id"], self.config.backend_url).rstrip("/")
                 if target == url:
                     entries.append(entry)
         return entries
+
+    def _observe_residency(self, url, entries):
+        # Native discovery reports actual residency, including models evicted by
+        # its cache. The first snapshot establishes a baseline at startup.
+        current = {entry["id"]: entry["loaded"] for entry in entries
+                   if isinstance(entry.get("loaded"), bool)}
+        with self._resident_guard:
+            previous = self._resident.get(url)
+            if previous is not None:
+                for model, loaded in current.items():
+                    if model in previous and previous[model] != loaded:
+                        log.info("Model %s %s memory", model, "loaded into" if loaded else "unloaded from")
+            self._resident[url] = current
+
+    def _queue_residency_refresh(self, model):
+        client = self._client_for(model)
+        url = str(client.base_url).rstrip("/")
+        with self._resident_guard:
+            # Coalesce requests per service so diagnostics cannot build a backlog.
+            if self._closing or url in self._refreshing:
+                return
+            self._refreshing.add(url)
+            self._residency_executor.submit(self._refresh_residency, client, url)
+
+    def _refresh_residency(self, client, url):
+        try:
+            response = client.get("/v1/models", timeout=min(1.0, self.config.backend_timeout))
+            self._check(response)
+            self._observe_residency(url, response.json().get("data", []))
+        except Exception:
+            # A status check must never turn successful synthesis into an error.
+            log.debug("Could not refresh native model residency", exc_info=True)
+        finally:
+            with self._resident_guard:
+                self._refreshing.discard(url)
 
     def voices(self, profile):
         response = self._client_for(profile.backend_model).get("/v1/audio/voices", params={"model": profile.backend_model})
@@ -129,17 +179,24 @@ class AudioCppBackend:
 
     def generate(self, profile, body, **kwargs):
         request = self.payload(profile, body, **kwargs)
+        started = time.perf_counter()
         with self._lock(request["model"]):
             response = self._client_for(request["model"]).post("/v1/audio/speech", json=request)
             self._check(response)
             audio, rate = sf.read(io.BytesIO(response.content), dtype="float32")
-        return mono_audio(audio, rate), rate
+        audio = mono_audio(audio, rate)
+        log.info("Speech model=%s runtime=%.2fs output=%.2fs", request["model"],
+                 time.perf_counter() - started, len(audio) / rate)
+        self._queue_residency_refresh(request["model"])
+        return audio, rate
 
     def stream(self, profile, body):
         if not profile.native_speed and body.speed != 1:
             raise ValueError("This streaming profile does not support speed changes")
         request = self.payload(profile, body, mode="stream")
         request.update(response_format="pcm", stream_format="sse", speed=body.speed)
+        started = time.perf_counter()
+        samples = 0
         with self._lock(request["model"]), self._client_for(request["model"]).stream("POST", "/v1/audio/speech", json=request) as response:
             if not response.is_success:
                 response.read()
@@ -154,6 +211,9 @@ class AudioCppBackend:
                 event_text = "\n".join(data)
                 data.clear()
                 if event_text == "[DONE]":
+                    log.info("Speech model=%s runtime=%.2fs output=%.2fs (stream)", request["model"],
+                             time.perf_counter() - started, samples / profile.streaming_sample_rate)
+                    self._queue_residency_refresh(request["model"])
                     return
                 event = json.loads(event_text)
                 if event.get("type") == "error" or "error" in event:
@@ -165,5 +225,6 @@ class AudioCppBackend:
                     audio = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768
                     if profile.streaming_channels > 1:
                         audio = audio.reshape(-1, profile.streaming_channels)
+                    samples += len(audio)
                     yield resample(audio, profile.streaming_sample_rate, self.config.output_sample_rate)
             raise RuntimeError("audio.cpp stream ended before [DONE]")

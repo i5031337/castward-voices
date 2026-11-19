@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import threading
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
@@ -63,7 +64,77 @@ class BackendTests(unittest.TestCase):
         finally:
             backend.close()
         self.assertTrue(all(client.is_closed for client in backend._clients.values()))
-        self.assertEqual(calls.count(('cpu.local','/v1/models')),1)
+        self.assertIn(calls.count(('cpu.local','/v1/models')), (2, 3))
+
+    def test_synthesis_logs_native_model_duration_and_residency_changes(self):
+        config = settings()
+        loaded = set()
+        wav = io.BytesIO()
+        sf.write(wav, np.ones(2400) * 0.1, 24000, format='WAV')
+        def handle(request):
+            if request.url.path == '/v1/models':
+                return httpx.Response(200, json={'data': [
+                    {'id': name, 'loaded': name in loaded}
+                    for name in ('future-model', 'reader')]})
+            model = json.loads(request.content)['model']
+            loaded.clear()
+            loaded.add(model)
+            return httpx.Response(200, content=wav.getvalue())
+        backend = AudioCppBackend(config, transport=httpx.MockTransport(handle))
+        try:
+            backend.discover()
+            with self.assertLogs('speech.backend', level='INFO') as captured:
+                backend.generate(config.models['actor'], SpeechRequest(model='actor', input='Hello'))
+                backend._residency_executor.submit(lambda: None).result(timeout=2)
+                backend.generate(config.models['reader'], SpeechRequest(model='reader', input='Hello'))
+                backend._residency_executor.submit(lambda: None).result(timeout=2)
+            messages = '\n'.join(captured.output)
+            self.assertIn('Speech model=future-model runtime=', messages)
+            self.assertIn('Speech model=reader runtime=', messages)
+            self.assertEqual(messages.count('output=0.10s'), 2)
+            self.assertIn('Model future-model loaded into memory', messages)
+            self.assertIn('Model future-model unloaded from memory', messages)
+            self.assertIn('Model reader loaded into memory', messages)
+        finally:
+            backend.close()
+
+    def test_stalled_residency_poll_does_not_block_synthesis_or_streaming(self):
+        config = settings()
+        polling = threading.Event()
+        release = threading.Event()
+        polls = []
+        wav = io.BytesIO()
+        sf.write(wav, np.ones(2400) * 0.1, 24000, format='WAV')
+
+        def handle(request):
+            if request.url.path == '/v1/models':
+                polls.append(request)
+                polling.set()
+                if not release.wait(timeout=5):
+                    raise AssertionError('Synthesis waited for the residency poll')
+                raise httpx.ReadTimeout('Status service stalled', request=request)
+            if json.loads(request.content).get('stream_format'):
+                return httpx.Response(200, text='data: [DONE]\n\n')
+            return httpx.Response(200, content=wav.getvalue())
+
+        backend = AudioCppBackend(config, transport=httpx.MockTransport(handle))
+        try:
+            audio, rate = backend.generate(config.models['actor'], SpeechRequest(model='actor', input='Hello'))
+            self.assertEqual((len(audio), rate), (2400, 24000))
+            self.assertTrue(polling.wait(timeout=2))
+            # Both paths finish while the first poll remains blocked. Further
+            # requests to the same service must not enqueue additional polls.
+            backend.generate(config.models['actor'], SpeechRequest(model='actor', input='Again'))
+            self.assertEqual(list(backend.stream(config.models['reader'],
+                SpeechRequest(model='reader', input='Hello'))), [])
+            self.assertEqual(len(polls), 1)
+            self.assertTrue(all(value <= 1 for value in polls[0].extensions['timeout'].values()))
+        finally:
+            release.set()
+            backend.close()
+        self.assertEqual(len(polls), 1)
+        self.assertFalse(backend._refreshing)
+        self.assertTrue(all(client.is_closed for client in backend._clients.values()))
 
     def test_routed_discovery_failure_is_not_hidden(self):
         config = settings().model_copy(update={'backend_routes': {'reader':'http://cpu.local'}})
@@ -111,9 +182,12 @@ class BackendTests(unittest.TestCase):
         payload=base64.b64encode(audio.tobytes()).decode()
         data='data: '+json.dumps({'type':'speech.audio.delta','audio':payload})+'\n\ndata: [DONE]\n\n'
         backend=AudioCppBackend(settings(),transport=httpx.MockTransport(lambda req:httpx.Response(200,text=data)))
-        chunks=list(backend.stream(settings().models['reader'],SpeechRequest(model='reader',input='Hello',response_format='pcm')))
+        with self.assertLogs('speech.backend', level='INFO') as captured:
+            chunks=list(backend.stream(settings().models['reader'],SpeechRequest(model='reader',input='Hello',response_format='pcm')))
         self.assertEqual(len(chunks),1)
         self.assertEqual(len(chunks[0]),2400)
+        self.assertIn('Speech model=reader-stream runtime=', captured.output[0])
+        self.assertIn('output=0.10s (stream)', captured.output[0])
         backend.close()
 
     def test_stream_errors_and_truncation_are_not_reported_as_success(self):
