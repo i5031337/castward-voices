@@ -71,7 +71,8 @@
     "firered": {
       "family": "fireredtts3",
       "profiles": [
-        "fireredtts3"
+        "fireredtts3",
+        "fireredtts3-presets"
       ],
       "prefer_cpu": false,
       "repo": "audio-cpp/audio.cpp-gguf",

@@ -12,7 +12,17 @@
       "path": "models/audiocpp-extra/FireRedTTS3-Instruct-GGUF/fireredtts3-instruct-q4_k.gguf",
       "task": "tts",
       "mode": "offline",
-      "device": 0
+      "device": 0,
+      "voice_presets": {
+        "male": {
+          "voice_ref": "presets/firered/male.wav",
+          "reference_text": "Welcome, traveler. The road ahead is long, but there is always a place for you by the fire."
+        },
+        "female": {
+          "voice_ref": "presets/firered/female.wav",
+          "reference_text": "Welcome, traveler. The road ahead is long, but there is always a place for you by the fire."
+        }
+      }
     }
   ]
 }

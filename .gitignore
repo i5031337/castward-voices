@@ -5,6 +5,7 @@ voices/
 out/
 __pycache__/
 *.wav
+!presets/firered/*.wav
 :memory:.ses
 
 # Local audio.cpp runtime

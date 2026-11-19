@@ -1,0 +1,24 @@
+{
+  "male": {
+    "file": "male.wav",
+    "source": "Local synthetic Qwen voice-design/reference experiment; selected by listening.",
+    "source_record": "50acf8819cd1b3262deb16981f36f1c7c245d334f3640fcd4fe36700bb32e265",
+    "description": "A warm, clear middle-aged male narrator with a calm, deep voice.",
+    "seed": 42,
+    "ref_text": "Welcome, traveler. The road ahead is long, but there is always a place for you by the fire.",
+    "reference_seconds": 5.52,
+    "reference_source": "dialogue",
+    "sample_rate": 24000
+  },
+  "female": {
+    "file": "female.wav",
+    "source": "Local synthetic Qwen voice-design/reference experiment; selected by listening.",
+    "source_record": "b43ec0bd82c30c05ab889c9ef84a1237f09f06340713468b7cdfb986e3a7288f",
+    "description": "A calm, warm adult woman with a clear American accent.",
+    "seed": 3626774720,
+    "ref_text": "Welcome, traveler. The road ahead is long, but there is always a place for you by the fire.",
+    "reference_seconds": 5.76,
+    "reference_source": "extended_dialogue",
+    "sample_rate": 24000
+  }
+}

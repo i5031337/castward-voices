@@ -36,7 +36,8 @@ class FireRedTests(unittest.TestCase):
                         {'name': 'template_name', 'type': 'enum', 'values': [
                             'voice_design', 'instruct_tts', 'semantic_edit', 'acoustic_edit']}]} for model in native['models']]})
             if request.url.path == '/v1/audio/voices':
-                return httpx.Response(200, json={'voices': []})
+                model = next((m for m in native['models'] if m['id'] == request.url.params.get('model')), {})
+                return httpx.Response(200, json={'voices': sorted(model.get('voice_presets', {}))})
             payload = json.loads(request.content)
             self.calls.append(payload)
             if 'max_tokens' in payload['options']:
@@ -108,6 +109,37 @@ class FireRedTests(unittest.TestCase):
         self.assertEqual(self.speech(stream=True, response_format='pcm').status_code, 400)
         self.assertEqual(len(self.calls), count)
 
+    def test_bundled_narrators_are_discoverable_and_use_reference_template(self):
+        model_id = 'fireredtts3-presets'
+        models = self.client.get('/v1/models').json()['data']
+        self.assertIn(model_id, [m['id'] for m in models])
+        voices = self.client.get('/v1/voices').json()['data']
+        self.assertEqual([v['id'] for v in voices if v['model'] == model_id], ['female', 'male'])
+        studio = self.client.get('/ui/config').json()
+        profile = next(p for p in studio['profiles'] if p['id'] == model_id)
+        self.assertEqual(profile['voices'], ['female', 'male'])
+        presets = next(m for m in self.native['models'] if m['id'] == 'firered-instruct')['voice_presets']
+        for voice in ('male', 'female'):
+            preset = presets[voice]
+            audio, rate = sf.read(ROOT / preset['voice_ref'])
+            self.assertTrue(np.isfinite(audio).all())
+            self.assertGreater(np.max(np.abs(audio)), .001)
+            self.assertTrue(3 <= len(audio) / rate <= 10)
+            self.assertIn('Welcome, traveler.', preset['reference_text'])
+            response = self.speech(model=model_id, voice=voice)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(self.calls[-1]['voice'], voice)
+            self.assertEqual(self.calls[-1]['options']['template_name'], 'instruct_tts')
+            self.assertNotIn('instruct', self.calls[-1]['options'])
+        response = self.speech(model=model_id)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.calls[-1]['voice'], 'male')
+        response = self.client.post('/ui/generate', json={'mode': 'speech', 'speech': {
+            'model': model_id, 'voice': 'female', 'input': 'Welcome home.'}})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.calls[-1]['voice'], 'female')
+        self.assertEqual(self.calls[-1]['options']['template_name'], 'instruct_tts')
+
     def test_short_npc_reference_extension_and_persistent_reuse(self):
         response = self.speech(npc_id='firered-guard', input='Hi.', instructions='An older guard',
                                max_new_tokens=128)
@@ -139,4 +171,5 @@ class FireRedTests(unittest.TestCase):
             model = next(m for m in gpu['models'] if m['id'] == 'firered-instruct')
             self.assertEqual(model['device'], 0)
             self.assertEqual(model['path'], str(ROOT / self.native['models'][-1]['path']))
+            self.assertEqual(model['voice_presets']['male']['voice_ref'], str(ROOT / 'presets/firered/male.wav'))
             self.assertNotIn('firered-instruct', [m['id'] for m in cpu['models']])

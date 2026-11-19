@@ -59,6 +59,9 @@ def make_configs(catalog, selected, *, cpu=False, device=0):
     native["models"] = [m for m in native["models"] if m["id"] in weights]
     for model in native["models"]:
         model["path"] = weights[model["id"]]
+        for preset in model.get("voice_presets", {}).values():
+            if isinstance(preset.get("voice_ref"), str):
+                preset["voice_ref"] = str(ROOT / preset["voice_ref"])
         model["lazy"] = True
         if cpu:
             model.pop("device", None)

@@ -346,6 +346,52 @@
       "reference_text_option": null,
       "seed_max": 4294967295,
       "default_voice": "alba"
+    },
+    "fireredtts3-presets": {
+      "backend_model": "firered-instruct",
+      "max_tokens_option": null,
+      "seed_max": 4294967295,
+      "language_map": {
+        "Auto": "English",
+        "Arabic": "Arabic",
+        "Cantonese": "Cantonese",
+        "Chinese": "Chinese",
+        "Czech": "Czech",
+        "Dutch": "Dutch",
+        "English": "English",
+        "Finnish": "Finnish",
+        "French": "French",
+        "German": "German",
+        "Greek": "Greek",
+        "Hindi": "Hindi",
+        "Indonesian": "Indonesian",
+        "Italian": "Italian",
+        "Japanese": "Japanese",
+        "Korean": "Korean",
+        "Polish": "Polish",
+        "Portuguese": "Portuguese",
+        "Romanian": "Romanian",
+        "Russian": "Russian",
+        "Spanish": "Spanish",
+        "Thai": "Thai",
+        "Turkish": "Turkish",
+        "Ukrainian": "Ukrainian",
+        "Vietnamese": "Vietnamese"
+      },
+      "default_voice": "male",
+      "options": {
+        "template_name": "instruct_tts"
+      },
+      "mode_conditions": {
+        "speech": {
+          "template_name": [
+            "instruct_tts"
+          ]
+        }
+      },
+      "max_input_chars": 4096,
+      "display_name": "FireRedTTS3 Instruct · preset voices",
+      "description": "Two fixed narrator voices, male and female, cloned from bundled reference recordings."
     }
   }
 }

@@ -28,6 +28,26 @@ Select **FireRedTTS3 Instruct** in Studio for Design or Clone, or send `model: "
 
 Design uses `template_name=voice_design`; Clone uses `instruct_tts`. The profile's `mode_conditions` restrict each mode to its compatible template in both the adapter and Studio. Semantic/acoustic editing requires native input-audio fields that this speech UI/API does not expose. Cloning accepts the reference transcript; complete short NPC recordings also supply their known transcript during extension. Cropped or possibly truncated recordings do not receive a guessed transcript. FireRed has no native streaming entry; PCM downloads are supported, while `stream: true` is rejected.
 
+**Narrator presets:** select **FireRedTTS3 Instruct · preset voices** in Studio or
+SillyTavern and choose `male` or `female`. API requests use
+`model: "fireredtts3-presets"` and `voice: "male"` or `"female"`; omitting the
+voice selects `male`. Both use `instruct_tts` cloning from fixed recordings,
+so each request keeps the selected voice identity without an NPC record.
+The native `firered-instruct` entry publishes these names through voice discovery.
+
+The bundled clips are [male.wav](presets/firered/male.wav) (5.52 seconds) and
+[female.wav](presets/firered/female.wav) (5.76 seconds), selected from local Qwen
+voice-design/reference experiments. Their transcript is: “Welcome, traveler.
+The road ahead is long, but there is always a place for you by the fire.”
+Source metadata is in [sources.json](presets/firered/sources.json).
+To customize a preset, replace its WAV and update its `reference_text` in the
+`firered-instruct.voice_presets` entry of the active native configuration
+(`audiocpp-server.local.json`, or `audiocpp-server.firered.json` for the pilot).
+Use a clean, single-speaker clip with an exact transcript. Then restart the
+server and refresh the client's voice list. If using setup-generated configs,
+rerun `./setup.sh --add firered` after editing the source configuration so the
+generated native config includes the updated transcript.
+
 Native discovery supplies the flow-step, guidance, stop-threshold, and text-chunk controls. Untouched controls retain native defaults, including ten inference steps. The facade omits `max_new_tokens` for FireRed because its native options do not include `max_tokens`. Seeds use `0..4294967295`. Language names retain FireRed's capitalization; `Auto` maps to English, and native dialect tags can be entered directly. See the [native FireRed guide](https://github.com/0xShug0/audio.cpp/blob/main/docs/models/fireredtts3.md) for supported tags and model limitations. The earlier Ming/Qwen memory budgets do not establish a FireRed Q8 budget.
 
 Reproduce the live design/clone/preset/NPC checks against a running FireRed-capable native service:

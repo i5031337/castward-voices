@@ -37,6 +37,10 @@ class SetupModelTests(unittest.TestCase):
                                 self.assertIn(target, ids)
                     for model in native['models']:
                         self.assertTrue(Path(model['path']).is_absolute())
+                        for preset in model.get('voice_presets', {}).values():
+                            if 'voice_ref' in preset:
+                                self.assertTrue(Path(preset['voice_ref']).is_absolute())
+                                self.assertTrue(Path(preset['voice_ref']).is_file())
                         self.assertEqual(model['device'], 0)
                     self.assertEqual(set(speech['models']), set().union(*(
                         set(self.catalog['models'][name]['profiles']) for name in selection)))
