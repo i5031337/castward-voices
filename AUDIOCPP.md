@@ -268,7 +268,7 @@ To change architectures, add or replace the model entries in audio.cpp's configu
 
 ## Preserved client behavior
 
-`POST /v1/audio/speech` retains WAV, MP3, FLAC, PCM, Opus, AAC, speed, NPC fields, and the encoded `sillynpc-v1:` bridge. The default output remains mono 24 kHz for the existing audiobook client, even when a backend synthesizes at another rate. `output_sample_rate` controls this conversion.
+`POST /v1/audio/speech` retains WAV, MP3, FLAC, PCM, Opus, AAC, speed, NPC fields, and the encoded `sillynpc-v1:` bridge. The default output remains mono 24 kHz, even when a backend synthesizes at another rate. `output_sample_rate` controls this conversion.
 
 The facade matches output volume across models and voices before encoding. It measures active 20 ms speech frames, targets about **-20 dBFS RMS**, limits adjustment to 12 dB in either direction, and keeps sample peaks below -1 dBFS. Silence and quiet gaps do not drive the level estimate. Streaming PCM smooths its gain across chunks; it cannot measure a complete utterance in advance, so levels may vary slightly more than on downloads. Set `output_level_dbfs` in `backend.json` to a target from -35 to -10, or `null` to disable normalization. Studio previews and downloads follow the same setting; original NPC and Studio reference recordings keep their native levels for cloning. This is a simple speech-level adjustment, not a perceptual LUFS measurement or a compressor.
 
